@@ -1,0 +1,12 @@
+[package]
+name = "enseal"
+version = "0.0.1"
+edition = "2021"
+description = "Secure, ephemeral secret sharing for developers"
+license = "MIT"
+repository = "https://github.com/FlerAlex/enseal"
+keywords = ["env", "secrets", "security", "dotenv", "wormhole"]
+categories = ["command-line-utilities", "cryptography"]
+
+
+[dependencies]
