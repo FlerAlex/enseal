@@ -6,7 +6,7 @@ use super::{Entry, EnvFile};
 /// Filter an EnvFile by include/exclude regex patterns on variable names.
 /// - `include`: if Some, only keep vars matching this pattern
 /// - `exclude`: if Some, remove vars matching this pattern
-/// Include is applied first, then exclude.
+///   Include is applied first, then exclude.
 pub fn filter(env: &EnvFile, include: Option<&str>, exclude: Option<&str>) -> Result<EnvFile> {
     let include_re = include.map(Regex::new).transpose()?;
     let exclude_re = exclude.map(Regex::new).transpose()?;

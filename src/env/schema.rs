@@ -123,7 +123,7 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
                     });
                 }
             }
-            "string" | _ => {}
+            _ => {}
         }
     }
 

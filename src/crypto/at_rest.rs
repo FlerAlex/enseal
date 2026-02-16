@@ -152,7 +152,7 @@ fn age_encrypt_multi(data: &[u8], recipients: &[&age::x25519::Recipient]) -> Res
 }
 
 fn age_decrypt(ciphertext: &[u8], identity: &age::x25519::Identity) -> Result<Vec<u8>> {
-    let decryptor = age::Decryptor::new(&ciphertext[..]).context("failed to read age header")?;
+    let decryptor = age::Decryptor::new(ciphertext).context("failed to read age header")?;
 
     let mut reader = decryptor
         .decrypt(std::iter::once(identity as &dyn age::Identity))

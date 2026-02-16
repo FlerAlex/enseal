@@ -13,7 +13,7 @@ pub async fn send(data: &[u8], relay_url: &str, code: &str) -> Result<()> {
         .context("failed to connect to enseal relay")?;
 
     // Send the data as a binary message
-    ws.send(tungstenite::Message::Binary(data.to_vec().into()))
+    ws.send(tungstenite::Message::Binary(data.to_vec()))
         .await
         .context("failed to send data through relay")?;
 
@@ -50,7 +50,7 @@ pub async fn receive(relay_url: &str, code: &str) -> Result<Vec<u8>> {
             Ok(tungstenite::Message::Binary(data)) => {
                 // Send ack
                 let _ = ws
-                    .send(tungstenite::Message::Binary(b"ack".to_vec().into()))
+                    .send(tungstenite::Message::Binary(b"ack".to_vec()))
                     .await;
                 let _ = ws.close(None).await;
                 return Ok(data.to_vec());
@@ -102,10 +102,10 @@ pub fn generate_code() -> String {
 /// Converts http(s) to ws(s) and strips trailing slashes.
 fn normalize_ws_url(url: &str) -> String {
     let url = url.trim_end_matches('/');
-    if url.starts_with("https://") {
-        format!("wss://{}", &url[8..])
-    } else if url.starts_with("http://") {
-        format!("ws://{}", &url[7..])
+    if let Some(rest) = url.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        format!("ws://{rest}")
     } else if url.starts_with("ws://") || url.starts_with("wss://") {
         url.to_string()
     } else {
