@@ -1,9 +1,12 @@
 pub mod check;
 pub mod diff;
+pub mod inject;
 pub mod input;
 pub mod keys;
 pub mod receive;
 pub mod redact;
+#[cfg(feature = "server")]
+pub mod serve;
 pub mod share;
 
 use clap::{Parser, Subcommand};
@@ -33,8 +36,11 @@ pub enum Command {
     /// Send a .env file, piped input, or inline secret
     Share(share::ShareArgs),
 
-    /// Receive secrets via wormhole code
+    /// Receive secrets via wormhole code or encrypted file
     Receive(receive::ReceiveArgs),
+
+    /// Receive secrets and inject into a child process (no file on disk)
+    Inject(inject::InjectArgs),
 
     /// Verify .env has all vars from .env.example
     Check(check::CheckArgs),
@@ -47,4 +53,8 @@ pub enum Command {
 
     /// Manage identity keys, aliases, and trusted keys
     Keys(keys::KeysArgs),
+
+    /// Run the enseal relay server
+    #[cfg(feature = "server")]
+    Serve(serve::ServeArgs),
 }

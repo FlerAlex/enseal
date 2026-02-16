@@ -8,6 +8,11 @@ repository = "https://github.com/FlerAlex/enseal"
 keywords = ["env", "secrets", "security", "dotenv", "wormhole"]
 categories = ["command-line-utilities", "cryptography"]
 
+[features]
+default = ["client", "server"]
+client = []
+server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:uuid"]
+
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -51,6 +56,20 @@ base64 = "0.22"
 
 # Transfer (v0.1: anonymous wormhole mode)
 magic-wormhole = "0.7"
+
+# Transfer (v0.3: self-hosted relay)
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
+# Server (v0.3: self-hosted relay, optional)
+axum = { version = "0.7", features = ["ws"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
+# Signal handling (inject command)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

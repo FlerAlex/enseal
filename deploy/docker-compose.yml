@@ -1,0 +1,11 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "4443:4443"
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+    command: ["--port", "4443", "--max-mailboxes", "100", "--channel-ttl", "300"]

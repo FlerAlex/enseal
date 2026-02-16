@@ -6,6 +6,8 @@ mod config;
 mod crypto;
 mod env;
 mod keys;
+#[cfg(feature = "server")]
+mod server;
 mod transfer;
 mod ui;
 
@@ -30,9 +32,12 @@ async fn main() -> Result<()> {
     match args.command {
         cli::Command::Share(args) => cli::share::run(args).await,
         cli::Command::Receive(args) => cli::receive::run(args).await,
+        cli::Command::Inject(args) => cli::inject::run(args).await,
         cli::Command::Check(args) => cli::check::run(args),
         cli::Command::Diff(args) => cli::diff::run(args),
         cli::Command::Redact(args) => cli::redact::run(args),
         cli::Command::Keys(args) => cli::keys::run(args),
+        #[cfg(feature = "server")]
+        cli::Command::Serve(args) => cli::serve::run(args).await,
     }
 }

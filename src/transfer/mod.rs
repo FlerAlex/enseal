@@ -1,5 +1,6 @@
 pub mod filedrop;
 pub mod identity;
+pub mod relay;
 pub mod wormhole;
 
 use std::borrow::Cow;
