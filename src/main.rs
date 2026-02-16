@@ -36,6 +36,8 @@ async fn main() -> Result<()> {
         cli::Command::Check(args) => cli::check::run(args),
         cli::Command::Diff(args) => cli::diff::run(args),
         cli::Command::Redact(args) => cli::redact::run(args),
+        cli::Command::Validate(args) => cli::validate::run(args),
+        cli::Command::Template(args) => cli::template::run(args),
         cli::Command::Keys(args) => cli::keys::run(args),
         #[cfg(feature = "server")]
         cli::Command::Serve(args) => cli::serve::run(args).await,

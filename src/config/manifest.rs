@@ -10,6 +10,7 @@ pub struct Manifest {
     pub defaults: Defaults,
     pub filter: FilterConfig,
     pub metadata: MetadataConfig,
+    pub schema: Option<crate::env::schema::Schema>,
 }
 
 #[derive(Debug, Default, Deserialize)]

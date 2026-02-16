@@ -1,7 +1,10 @@
 pub mod diff;
 pub mod filter;
+pub mod interpolation;
 pub mod parser;
+pub mod profile;
 pub mod redact;
+pub mod schema;
 pub mod validator;
 
 use std::fmt;

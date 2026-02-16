@@ -8,6 +8,8 @@ pub mod redact;
 #[cfg(feature = "server")]
 pub mod serve;
 pub mod share;
+pub mod template;
+pub mod validate;
 
 use clap::{Parser, Subcommand};
 
@@ -50,6 +52,12 @@ pub enum Command {
 
     /// Output .env with values replaced by <REDACTED>
     Redact(redact::RedactArgs),
+
+    /// Validate .env against schema rules in .enseal.toml
+    Validate(validate::ValidateArgs),
+
+    /// Generate .env.example from a real .env with type hints
+    Template(template::TemplateArgs),
 
     /// Manage identity keys, aliases, and trusted keys
     Keys(keys::KeysArgs),

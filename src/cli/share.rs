@@ -45,6 +45,14 @@ pub struct ShareArgs {
     #[arg(long)]
     pub include: Option<String>,
 
+    /// Don't resolve ${VAR} references before sending
+    #[arg(long)]
+    pub no_interpolate: bool,
+
+    /// Environment profile (resolves to .env.<name>)
+    #[arg(long, value_name = "NAME")]
+    pub env: Option<String>,
+
     /// Send raw file, skip .env parsing
     #[arg(long)]
     pub no_filter: bool,
@@ -63,16 +71,24 @@ pub struct ShareArgs {
 }
 
 pub async fn run(args: ShareArgs) -> Result<()> {
-    // 1. Detect and read input
+    // 1. Resolve file via profile if --env is set
+    let file_arg = if let Some(ref profile) = args.env {
+        let resolved = env::profile::resolve(profile, std::path::Path::new("."))?;
+        Some(resolved.to_string_lossy().into_owned())
+    } else {
+        args.file.clone()
+    };
+
+    // 2. Detect and read input
     let payload = input::select_input(
         args.secret.as_deref(),
         args.r#as.as_deref(),
         args.label.as_deref(),
-        args.file.as_deref(),
+        file_arg.as_deref(),
         args.quiet,
     )?;
 
-    // 2. For .env payloads, parse and filter
+    // 3. For .env payloads, parse, interpolate, and filter
     let content = if payload.format == input::PayloadFormat::Env && !args.no_filter {
         let env_file = env::parser::parse(&payload.content)?;
 
@@ -81,6 +97,13 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         for issue in &issues {
             display::warning(&issue.message);
         }
+
+        // Interpolate ${VAR} references (unless --no-interpolate)
+        let env_file = if args.no_interpolate {
+            env_file
+        } else {
+            env::interpolation::interpolate(&env_file)?
+        };
 
         // Apply filters
         let filtered =

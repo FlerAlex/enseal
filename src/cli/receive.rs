@@ -3,6 +3,7 @@ use clap::Args;
 
 use crate::cli::input::PayloadFormat;
 use crate::crypto::envelope::Envelope;
+use crate::env;
 use crate::keys;
 use crate::transfer;
 use crate::ui::display;
@@ -124,6 +125,11 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         return Ok(());
     }
 
+    // Schema validation on receive (non-blocking warnings)
+    if matches!(envelope.format, PayloadFormat::Env) {
+        validate_against_schema(payload, args.quiet);
+    }
+
     // Route output based on format
     match envelope.format {
         PayloadFormat::Env => {
@@ -155,4 +161,30 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run schema validation against received .env payload.
+/// Emits warnings but never blocks the receive.
+fn validate_against_schema(payload: &str, quiet: bool) {
+    if quiet {
+        return;
+    }
+
+    let schema = match env::schema::load_schema(None) {
+        Ok(Some(s)) => s,
+        _ => return, // No schema or error loading — skip silently
+    };
+
+    let env_file = match env::parser::parse(payload) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let errors = env::schema::validate(&env_file, &schema);
+    if !errors.is_empty() {
+        display::warning("received .env has schema validation issues:");
+        for err in &errors {
+            display::warning(&format!("  {}", err));
+        }
+    }
 }
