@@ -8,5 +8,49 @@ repository = "https://github.com/FlerAlex/enseal"
 keywords = ["env", "secrets", "security", "dotenv", "wormhole"]
 categories = ["command-line-utilities", "cryptography"]
 
-
 [dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# .env handling
+dotenvy = "0.15"
+
+# Terminal UI
+indicatif = "0.17"
+console = "0.15"
+dialoguer = "0.11"
+
+# Config & serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Misc
+regex = "1"
+directories = "5"
+is-terminal = "0.4"
+arboard = "3"
+
+# Crypto (v0.1: envelope encryption)
+age = { version = "0.11", features = ["armor"] }
+rand = "0.8"
+sha2 = "0.10"
+
+# Transfer (v0.1: anonymous wormhole mode)
+magic-wormhole = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"

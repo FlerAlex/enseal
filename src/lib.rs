@@ -1,5 +1,10 @@
 //! # enseal
 //!
 //! Secure, ephemeral secret sharing for developers.
-//!
-//! **Under active development.** See the repository for progress.
+
+pub mod cli;
+pub mod config;
+pub mod crypto;
+pub mod env;
+pub mod transfer;
+pub mod ui;
