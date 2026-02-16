@@ -40,7 +40,7 @@ cargo build --release
 
 ### Prebuilt binaries
 
-Download from [GitHub Releases](https://github.com/YOURUSERNAME/enseal/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows.
+Download from [GitHub Releases](https://github.com/FlerAlex/enseal/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows.
 
 ## Quick Start
 
