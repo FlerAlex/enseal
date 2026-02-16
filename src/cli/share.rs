@@ -219,14 +219,8 @@ async fn send_identity_mode(
         display::ok(&format!("pushed to {}", display_name));
     } else {
         // Wormhole mode (default)
-        let code = transfer::identity::send(
-            envelope,
-            &age_recipients,
-            &sender,
-            None,
-            args.words,
-        )
-        .await?;
+        let code =
+            transfer::identity::send(envelope, &age_recipients, &sender, None, args.words).await?;
 
         if !args.quiet {
             display::info("Share code:", &code);

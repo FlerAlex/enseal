@@ -15,10 +15,7 @@ use tokio::sync::oneshot;
 
 /// Helper: send an envelope through wormhole, returning the code via a channel
 /// so the receiver can connect concurrently.
-async fn send_with_code(
-    envelope: Envelope,
-    code_tx: oneshot::Sender<String>,
-) {
+async fn send_with_code(envelope: Envelope, code_tx: oneshot::Sender<String>) {
     let config = transfer::app_config(None);
     let mailbox = magic_wormhole::MailboxConnection::create(config, 2)
         .await
@@ -26,9 +23,7 @@ async fn send_with_code(
     let code = mailbox.code().to_string();
     code_tx.send(code).unwrap();
 
-    let mut wormhole = magic_wormhole::Wormhole::connect(mailbox)
-        .await
-        .unwrap();
+    let mut wormhole = magic_wormhole::Wormhole::connect(mailbox).await.unwrap();
     let data = envelope.to_bytes().unwrap();
     wormhole.send(data).await.unwrap();
     wormhole.close().await.unwrap();

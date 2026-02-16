@@ -71,7 +71,10 @@ pub async fn run(args: InjectArgs) -> Result<()> {
 }
 
 async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
-    let code = args.code.as_deref().expect("code required in non-listen mode");
+    let code = args
+        .code
+        .as_deref()
+        .expect("code required in non-listen mode");
 
     // Detect mode: file drop (.env.age file) vs wormhole code
     let is_file = std::path::Path::new(code).exists() && code.ends_with(".age");
@@ -91,13 +94,8 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
         let store = keys::store::KeyStore::open()?;
         if store.is_initialized() {
             let own_identity = keys::identity::EnsealIdentity::load(&store)?;
-            match transfer::identity::receive(
-                code,
-                &own_identity,
-                None,
-                args.relay.as_deref(),
-            )
-            .await
+            match transfer::identity::receive(code, &own_identity, None, args.relay.as_deref())
+                .await
             {
                 Ok((envelope, sender_pubkey)) => {
                     if !args.quiet {
@@ -118,7 +116,9 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
 }
 
 async fn listen_mode(args: &InjectArgs) -> Result<Envelope> {
-    let relay_url = args.relay.as_deref()
+    let relay_url = args
+        .relay
+        .as_deref()
         .ok_or_else(|| anyhow::anyhow!("--listen requires --relay or ENSEAL_RELAY"))?;
 
     let store = keys::store::KeyStore::open()?;

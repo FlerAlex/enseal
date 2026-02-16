@@ -184,14 +184,10 @@ mod relay_tests {
         let received_signed =
             enseal::crypto::signing::SignedEnvelope::from_bytes(&received_bytes).unwrap();
         let decrypted = received_signed.open(&receiver, None).unwrap();
-        let received_envelope =
-            enseal::crypto::envelope::Envelope::from_bytes(&decrypted).unwrap();
+        let received_envelope = enseal::crypto::envelope::Envelope::from_bytes(&decrypted).unwrap();
 
         assert_eq!(received_envelope.payload, content);
-        assert_eq!(
-            received_envelope.metadata.var_count,
-            Some(2)
-        );
+        assert_eq!(received_envelope.metadata.var_count, Some(2));
     }
 
     #[tokio::test]

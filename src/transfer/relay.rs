@@ -49,9 +49,7 @@ pub async fn receive(relay_url: &str, code: &str) -> Result<Vec<u8>> {
         match msg {
             Ok(tungstenite::Message::Binary(data)) => {
                 // Send ack
-                let _ = ws
-                    .send(tungstenite::Message::Binary(b"ack".to_vec()))
-                    .await;
+                let _ = ws.send(tungstenite::Message::Binary(b"ack".to_vec())).await;
                 let _ = ws.close(None).await;
                 return Ok(data.to_vec());
             }

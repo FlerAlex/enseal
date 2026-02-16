@@ -70,7 +70,10 @@ pub async fn ws_handler(
 ) -> impl IntoResponse {
     if !state.check_rate_limit(addr.ip()).await {
         tracing::warn!(ip = %addr.ip(), "rate limit exceeded");
-        return (axum::http::StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "rate limit exceeded",
+        )
             .into_response();
     }
     let max_payload = state.max_payload_bytes;
@@ -78,7 +81,12 @@ pub async fn ws_handler(
         .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>, max_payload_bytes: usize) {
+async fn handle_socket(
+    socket: WebSocket,
+    code: String,
+    state: Arc<RelayState>,
+    max_payload_bytes: usize,
+) {
     use futures_util::{SinkExt, StreamExt};
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -136,7 +144,11 @@ async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>, 
                 }
                 if let Message::Binary(ref data) = msg {
                     if data.len() > max_payload_second {
-                        tracing::warn!("payload size {} exceeds limit {}", data.len(), max_payload_second);
+                        tracing::warn!(
+                            "payload size {} exceeds limit {}",
+                            data.len(),
+                            max_payload_second
+                        );
                         break;
                     }
                 }
@@ -195,7 +207,11 @@ async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>, 
                 }
                 if let Message::Binary(ref data) = msg {
                     if data.len() > max_payload_first {
-                        tracing::warn!("payload size {} exceeds limit {}", data.len(), max_payload_first);
+                        tracing::warn!(
+                            "payload size {} exceeds limit {}",
+                            data.len(),
+                            max_payload_first
+                        );
                         break;
                     }
                 }
