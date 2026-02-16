@@ -2,12 +2,14 @@ use anyhow::Result;
 use clap::Args;
 
 use crate::cli::input::PayloadFormat;
+use crate::crypto::envelope::Envelope;
+use crate::keys;
 use crate::transfer;
 use crate::ui::display;
 
 #[derive(Args)]
 pub struct ReceiveArgs {
-    /// Wormhole share code
+    /// Wormhole share code or path to .env.age file
     pub code: String,
 
     /// Write to specific file (overrides format-based default)
@@ -32,9 +34,72 @@ pub struct ReceiveArgs {
 }
 
 pub async fn run(args: ReceiveArgs) -> Result<()> {
-    // 1. Receive via wormhole
-    let envelope = transfer::wormhole::receive(&args.code, args.relay.as_deref()).await?;
+    // Detect mode: file drop (.env.age file) vs wormhole code
+    let is_file = std::path::Path::new(&args.code).exists()
+        && args.code.ends_with(".age");
 
+    let envelope = if is_file {
+        receive_filedrop(&args)?
+    } else {
+        receive_wormhole(&args).await?
+    };
+
+    output_envelope(&args, &envelope)
+}
+
+async fn receive_wormhole(args: &ReceiveArgs) -> Result<Envelope> {
+    // Try identity mode first: if we have keys initialized, use identity receive
+    // But wormhole codes work the same for both — the envelope content tells us
+    // whether it's signed or not.
+    // For now, try to receive as signed first, fall back to anonymous.
+    let store = keys::store::KeyStore::open()?;
+
+    if store.is_initialized() {
+        // Try receiving as identity-mode (signed envelope)
+        let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+        match transfer::identity::receive(
+            &args.code,
+            &own_identity,
+            None, // Don't require specific sender
+            args.relay.as_deref(),
+        )
+        .await
+        {
+            Ok((envelope, sender_pubkey)) => {
+                if !args.quiet {
+                    display::info("From:", &sender_pubkey);
+                    display::ok("signature verified");
+                }
+                return Ok(envelope);
+            }
+            Err(_) => {
+                // Not an identity-mode transfer, try anonymous
+                tracing::debug!("not an identity-mode transfer, trying anonymous");
+            }
+        }
+    }
+
+    // Anonymous mode
+    let envelope = transfer::wormhole::receive(&args.code, args.relay.as_deref()).await?;
+    Ok(envelope)
+}
+
+fn receive_filedrop(args: &ReceiveArgs) -> Result<Envelope> {
+    let store = keys::store::KeyStore::open()?;
+    let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+
+    let path = std::path::Path::new(&args.code);
+    let (envelope, sender_pubkey) = transfer::filedrop::read(path, &own_identity, None)?;
+
+    if !args.quiet {
+        display::info("From:", &sender_pubkey);
+        display::ok("signature verified, file decrypted");
+    }
+
+    Ok(envelope)
+}
+
+fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
     let payload = &envelope.payload;
 
     // Show metadata
@@ -47,7 +112,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         }
     }
 
-    // 2. Handle clipboard
+    // Handle clipboard
     if args.clipboard {
         let mut clipboard = arboard::Clipboard::new()?;
         clipboard.set_text(payload)?;
@@ -59,11 +124,10 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         return Ok(());
     }
 
-    // 3. Route output based on format
+    // Route output based on format
     match envelope.format {
         PayloadFormat::Env => {
             if args.no_write {
-                // Force stdout
                 print!("{}", payload);
             } else {
                 let path = args.output.as_deref().unwrap_or(".env");
@@ -77,7 +141,6 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 std::fs::write(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
-                // Raw goes to stdout, metadata to stderr
                 print!("{}", payload);
             }
         }
@@ -86,7 +149,6 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 std::fs::write(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
-                // KV goes to stdout
                 println!("{}", payload);
             }
         }

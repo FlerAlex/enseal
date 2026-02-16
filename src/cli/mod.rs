@@ -1,6 +1,7 @@
 pub mod check;
 pub mod diff;
 pub mod input;
+pub mod keys;
 pub mod receive;
 pub mod redact;
 pub mod share;
@@ -43,4 +44,7 @@ pub enum Command {
 
     /// Output .env with values replaced by <REDACTED>
     Redact(redact::RedactArgs),
+
+    /// Manage identity keys, aliases, and trusted keys
+    Keys(keys::KeysArgs),
 }

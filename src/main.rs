@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod crypto;
 mod env;
+mod keys;
 mod transfer;
 mod ui;
 
@@ -32,5 +33,6 @@ async fn main() -> Result<()> {
         cli::Command::Check(args) => cli::check::run(args),
         cli::Command::Diff(args) => cli::diff::run(args),
         cli::Command::Redact(args) => cli::redact::run(args),
+        cli::Command::Keys(args) => cli::keys::run(args),
     }
 }

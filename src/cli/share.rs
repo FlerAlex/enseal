@@ -4,6 +4,7 @@ use clap::Args;
 use crate::cli::input;
 use crate::crypto::envelope::Envelope;
 use crate::env::{self, filter};
+use crate::keys;
 use crate::transfer;
 use crate::ui::display;
 
@@ -23,6 +24,14 @@ pub struct ShareArgs {
     /// Wrap raw string as KEY=<value> for .env-compatible receive
     #[arg(long, value_name = "KEY")]
     pub r#as: Option<String>,
+
+    /// Identity mode: encrypt to named recipient (alias or identity)
+    #[arg(long)]
+    pub to: Option<String>,
+
+    /// File drop: write encrypted file instead of network transfer (identity mode)
+    #[arg(long)]
+    pub output: Option<String>,
 
     /// Number of words in wormhole code (2-5)
     #[arg(long, default_value = "2")]
@@ -93,11 +102,25 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         if let Some(ref label) = envelope.metadata.label {
             display::info("Label:", label);
         }
-        display::info("Expires:", &format!("{} seconds or first receive", args.timeout));
     }
 
-    // 5. Send via wormhole
-    let code = transfer::wormhole::send(&envelope, args.relay.as_deref(), args.words).await?;
+    // 5. Route based on mode: identity (--to) vs anonymous (wormhole)
+    if let Some(ref recipient_name) = args.to {
+        send_identity_mode(&args, &envelope, recipient_name).await
+    } else {
+        send_anonymous_mode(&args, &envelope).await
+    }
+}
+
+async fn send_anonymous_mode(args: &ShareArgs, envelope: &Envelope) -> Result<()> {
+    if !args.quiet {
+        display::info(
+            "Expires:",
+            &format!("{} seconds or first receive", args.timeout),
+        );
+    }
+
+    let code = transfer::wormhole::send(envelope, args.relay.as_deref(), args.words).await?;
 
     if !args.quiet {
         display::info("Share code:", &code);
@@ -106,6 +129,58 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     }
 
     display::ok("sent");
+    Ok(())
+}
+
+async fn send_identity_mode(
+    args: &ShareArgs,
+    envelope: &Envelope,
+    recipient_name: &str,
+) -> Result<()> {
+    // Resolve recipient
+    let identity_name = keys::resolve_recipient(recipient_name)?;
+
+    let store = keys::store::KeyStore::open()?;
+    let sender = keys::identity::EnsealIdentity::load(&store)?;
+    let recipient = keys::identity::TrustedKey::load(&store, &identity_name)?;
+
+    if !args.quiet {
+        display::info("To:", &identity_name);
+        display::info("Fingerprint:", &recipient.fingerprint());
+    }
+
+    if let Some(ref output_dir) = args.output {
+        // File drop mode
+        let dest = transfer::filedrop::write(
+            envelope,
+            &recipient,
+            &sender,
+            std::path::Path::new(output_dir),
+        )?;
+        display::ok(&format!(
+            "encrypted to {}, written to {}",
+            identity_name,
+            dest.display()
+        ));
+    } else {
+        // Identity relay mode
+        let code = transfer::identity::send(
+            envelope,
+            &recipient,
+            &sender,
+            args.relay.as_deref(),
+            args.words,
+        )
+        .await?;
+
+        if !args.quiet {
+            display::info("Share code:", &code);
+        } else {
+            println!("{}", code);
+        }
+
+        display::ok(&format!("encrypted to {}, signed by you", identity_name));
+    }
 
     Ok(())
 }
