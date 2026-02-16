@@ -1,5 +1,10 @@
 # enseal
 
+[![CI](https://github.com/FlerAlex/enseal/actions/workflows/ci.yml/badge.svg)](https://github.com/FlerAlex/enseal/actions/workflows/ci.yml)
+[![Release](https://github.com/FlerAlex/enseal/actions/workflows/release.yml/badge.svg)](https://github.com/FlerAlex/enseal/actions/workflows/release.yml)
+[![Crates.io](https://img.shields.io/crates/v/enseal)](https://crates.io/crates/enseal)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Secure, ephemeral secret sharing for developers.
 
 Stop pasting secrets into Slack. `enseal` makes the secure path faster than the insecure one — share `.env` files and secrets through encrypted, single-use channels with one command and zero setup.
