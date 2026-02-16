@@ -113,9 +113,11 @@ fn resolve_recipients(to: &[String]) -> Result<Vec<age::x25519::Recipient>> {
     let mut recipients = Vec::new();
 
     for name in to {
-        let resolved = crate::keys::resolve_recipient(name)?;
-        let trusted = crate::keys::identity::TrustedKey::load(&store, &resolved)?;
-        recipients.push(trusted.age_recipient);
+        let identities = crate::keys::resolve_to_identities(name)?;
+        for id in &identities {
+            let trusted = crate::keys::identity::TrustedKey::load(&store, id)?;
+            recipients.push(trusted.age_recipient);
+        }
     }
 
     // Also include own key so the sender can decrypt too

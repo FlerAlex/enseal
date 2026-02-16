@@ -6,11 +6,11 @@ use crate::crypto::signing::SignedEnvelope;
 use crate::keys::identity::{EnsealIdentity, TrustedKey};
 
 /// Send an identity-mode envelope via wormhole relay.
-/// Encrypts to recipient's age key, signs with sender's ed25519 key,
+/// Encrypts to recipients' age keys, signs with sender's ed25519 key,
 /// then transfers the signed envelope through wormhole.
 pub async fn send(
     envelope: &Envelope,
-    recipient: &TrustedKey,
+    recipients: &[&age::x25519::Recipient],
     sender: &EnsealIdentity,
     relay_url: Option<&str>,
     code_words: usize,
@@ -18,7 +18,7 @@ pub async fn send(
     let inner_bytes = envelope.to_bytes()?;
 
     // Encrypt + sign
-    let signed = SignedEnvelope::seal(&inner_bytes, &recipient.age_recipient, sender)?;
+    let signed = SignedEnvelope::seal(&inner_bytes, recipients, sender)?;
     let wire_bytes = signed.to_bytes()?;
 
     // Send through wormhole
@@ -59,9 +59,7 @@ pub async fn receive(
 ) -> Result<(Envelope, String)> {
     let config = super::app_config(relay_url);
 
-    let code_parsed = code
-        .parse()
-        .context("invalid wormhole code format")?;
+    let code_parsed = code.parse().context("invalid wormhole code format")?;
 
     tracing::debug!("connecting to rendezvous server (identity mode)...");
     let mailbox = MailboxConnection::connect(config, code_parsed, true)

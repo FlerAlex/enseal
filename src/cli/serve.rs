@@ -28,6 +28,14 @@ pub struct ServeArgs {
     #[arg(long, default_value = "300")]
     pub channel_ttl: u64,
 
+    /// Max WebSocket message size in bytes
+    #[arg(long, default_value = "1048576")]
+    pub max_payload: usize,
+
+    /// Max new connections per minute per IP
+    #[arg(long, default_value = "10")]
+    pub rate_limit: usize,
+
     /// Print server health check and exit
     #[arg(long)]
     pub health: bool,
@@ -46,16 +54,24 @@ pub async fn run(args: ServeArgs) -> Result<()> {
         bind: args.bind.clone(),
         max_channels: args.max_mailboxes,
         channel_ttl_secs: args.channel_ttl,
+        max_payload_bytes: args.max_payload,
+        rate_limit_per_min: args.rate_limit,
     };
 
     let app = server::build_router(config);
 
     display::ok(&format!("enseal relay listening on {}", addr));
-    eprintln!("  max channels: {}", args.max_mailboxes);
-    eprintln!("  channel TTL:  {}s", args.channel_ttl);
+    eprintln!("  max channels:  {}", args.max_mailboxes);
+    eprintln!("  channel TTL:   {}s", args.channel_ttl);
+    eprintln!("  max payload:   {} bytes", args.max_payload);
+    eprintln!("  rate limit:    {}/min per IP", args.rate_limit);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -66,7 +82,10 @@ async fn check_health(args: &ServeArgs) -> Result<()> {
     // Use a simple TCP check since we don't want to add reqwest as a dep
     match tokio::net::TcpStream::connect(format!("{}:{}", args.bind, args.port)).await {
         Ok(_) => {
-            display::ok(&format!("relay is reachable at {}:{}", args.bind, args.port));
+            display::ok(&format!(
+                "relay is reachable at {}:{}",
+                args.bind, args.port
+            ));
             Ok(())
         }
         Err(e) => {

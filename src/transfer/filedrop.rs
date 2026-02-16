@@ -6,23 +6,27 @@ use crate::crypto::envelope::Envelope;
 use crate::crypto::signing::SignedEnvelope;
 use crate::keys::identity::{EnsealIdentity, TrustedKey};
 
-/// Write an encrypted file drop: encrypt to recipient, sign with sender key.
-/// Produces `<output_dir>/<identity>.env.age`.
+/// Write an encrypted file drop: encrypt to recipients, sign with sender key.
+/// Produces `<output_dir>/<filename>.env.age`.
 pub fn write(
     envelope: &Envelope,
-    recipient: &TrustedKey,
+    recipients: &[&age::x25519::Recipient],
     sender: &EnsealIdentity,
     output_dir: &Path,
+    filename: &str,
 ) -> Result<std::path::PathBuf> {
     let inner_bytes = envelope.to_bytes()?;
-    let signed = SignedEnvelope::seal(&inner_bytes, &recipient.age_recipient, sender)?;
+    let signed = SignedEnvelope::seal(&inner_bytes, recipients, sender)?;
     let wire_bytes = signed.to_bytes()?;
 
-    let filename = format!("{}.env.age", recipient.identity);
-    let dest = output_dir.join(&filename);
+    let dest = output_dir.join(format!("{}.env.age", filename));
 
-    std::fs::create_dir_all(output_dir)
-        .with_context(|| format!("failed to create output directory: {}", output_dir.display()))?;
+    std::fs::create_dir_all(output_dir).with_context(|| {
+        format!(
+            "failed to create output directory: {}",
+            output_dir.display()
+        )
+    })?;
 
     std::fs::write(&dest, &wire_bytes)
         .with_context(|| format!("failed to write file: {}", dest.display()))?;

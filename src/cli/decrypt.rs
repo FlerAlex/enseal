@@ -82,11 +82,7 @@ fn decrypt_whole_file(
     Ok(())
 }
 
-fn decrypt_per_var(
-    args: &DecryptArgs,
-    content: &str,
-    identity: &EnsealIdentity,
-) -> Result<()> {
+fn decrypt_per_var(args: &DecryptArgs, content: &str, identity: &EnsealIdentity) -> Result<()> {
     let env_file = env::parser::parse(content)?;
     let decrypted = at_rest::decrypt_per_var(&env_file, &identity.age_identity)?;
     let output_str = decrypted.to_string();

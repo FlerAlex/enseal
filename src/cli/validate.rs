@@ -34,10 +34,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
 
     if errors.is_empty() {
         let count = env_file.var_count();
-        display::ok(&format!(
-            "{}/{} variables passed validation",
-            count, count
-        ));
+        display::ok(&format!("{}/{} variables passed validation", count, count));
         return Ok(());
     }
 
@@ -58,10 +55,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     if passed == total {
         display::ok(&format!("{}/{} variables passed validation", passed, total));
     } else {
-        display::error(&format!(
-            "{}/{} variables passed validation",
-            passed, total
-        ));
+        display::error(&format!("{}/{} variables passed validation", passed, total));
         bail!("validation failed");
     }
 

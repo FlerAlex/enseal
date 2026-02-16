@@ -72,8 +72,13 @@ enseal receive 4-orbital-hammock | pbcopy
 ### Inject secrets into a process (never touch disk)
 
 ```bash
+# via wormhole code
 enseal inject 7-guitarist-revenge -- npm start
 ok: 14 secrets injected into process environment
+
+# via identity listen mode (zero codes, zero coordination)
+enseal inject --listen --relay wss://relay.internal:4443 -- npm start
+ok: waiting for incoming transfer...
 ```
 
 Secrets exist only in the child process's memory. When it exits, they're gone.
@@ -89,11 +94,25 @@ enseal share .env                         # generates code
 enseal receive 7-guitarist-revenge        # uses code
 ```
 
-**Identity mode** — public-key encryption for known teammates. No codes, no coordination. Encrypt to a name.
+**Identity mode** — public-key encryption for known teammates. Encrypt to a name.
 
 ```bash
 enseal keys init                          # one-time setup
 enseal share .env --to sarah              # encrypt to sarah's public key
+```
+
+Identity mode supports three transport options:
+
+```bash
+# wormhole (default, no --relay): generates a code like anonymous mode
+enseal share .env --to sarah
+
+# relay push (with --relay): zero codes, pushes directly to recipient's channel
+enseal share .env --to sarah --relay wss://relay.internal:4443
+
+# file drop (with --output): no network, produces encrypted file
+enseal share .env --to sarah --output ./drop/
+# produces ./drop/sarah@company.com.env.age
 ```
 
 ### Flexible Input
@@ -104,6 +123,9 @@ enseal accepts secrets from multiple sources:
 # .env file (default)
 enseal share .env
 enseal share staging.env
+
+# environment profile
+enseal share --env staging               # resolves to .env.staging
 
 # pipe from stdin
 echo "sk_live_abc123" | enseal share
@@ -117,16 +139,46 @@ enseal share --secret "API_KEY=sk_live_abc123"
 echo "sk_live_abc123" | enseal share --as STRIPE_KEY
 ```
 
+### Variable Interpolation
+
+`${VAR}` references are resolved before sending so recipients get fully expanded values:
+
+```env
+DB_HOST=postgres.internal
+DB_PORT=5432
+DATABASE_URL=postgres://user:pass@${DB_HOST}:${DB_PORT}/myapp
+```
+
+Supports `${VAR:-default}` fallback syntax. Circular and forward references are detected and rejected. Use `--no-interpolate` to send raw `${VAR}` syntax.
+
+### Filtering
+
+Control which variables are sent:
+
+```bash
+# exclude public/non-secret vars
+enseal share .env --exclude "^PUBLIC_|^NEXT_PUBLIC_"
+
+# send only matching vars
+enseal share .env --include "^DB_|^API_"
+
+# skip .env parsing entirely (send raw file)
+enseal share .env --no-filter
+```
+
 ### Smart Receive
 
 Output adapts to what was sent:
 
 ```bash
-# .env payload → writes to file
+# .env payload -> writes to file
 enseal receive CODE
 ok: 14 secrets written to .env
 
-# raw string → prints to stdout (pipe-friendly)
+# write to specific file
+enseal receive CODE --output staging.env
+
+# raw string -> prints to stdout (pipe-friendly)
 enseal receive CODE
 sk_live_abc123
 
@@ -136,7 +188,29 @@ ok: copied to clipboard
 
 # force stdout for any payload
 enseal receive CODE --no-write
+
+# receive from encrypted file drop (identity mode)
+enseal receive ./staging.env.age
+ok: signature verified, file decrypted
+ok: 14 secrets written to .env
 ```
+
+### Inject
+
+Receive secrets and inject them directly as environment variables into a child process. Secrets never touch the filesystem.
+
+```bash
+# anonymous mode: inject via wormhole code
+enseal inject 7-guitarist-revenge -- npm start
+
+# identity mode: listen for incoming transfer on relay
+enseal inject --listen --relay wss://relay.internal:4443 -- docker compose up
+
+# from encrypted file drop
+enseal inject ./staging.env.age -- python manage.py runserver
+```
+
+With `--listen`, the receiver connects to the relay and waits. The sender pushes with `enseal share .env --to alex --relay wss://relay.internal:4443` — no codes exchanged, zero coordination needed.
 
 ### .env Toolkit
 
@@ -201,8 +275,17 @@ enseal keys init
 # share your public key with teammates
 enseal keys export > my-key.pub
 
-# import a teammate's key
+# import a teammate's key (shows fingerprint, prompts for confirmation)
 enseal keys import sarah.pub
+
+# list all trusted keys and aliases
+enseal keys list
+
+# show your key fingerprint (for out-of-band verification)
+enseal keys fingerprint
+
+# remove a trusted key
+enseal keys remove sarah@company.com
 
 # create aliases for convenience
 enseal keys alias sarah sarah@company.com
@@ -211,7 +294,11 @@ enseal keys alias sarah sarah@company.com
 enseal keys group create backend-team
 enseal keys group add backend-team sarah
 enseal keys group add backend-team alex
+enseal keys group list backend-team
 enseal share .env --to backend-team
+
+# delete a group
+enseal keys group delete backend-team
 ```
 
 ### Self-Hosted Relay
@@ -225,10 +312,24 @@ docker run -d -p 4443:4443 enseal/relay
 # Or as a binary
 enseal serve --port 4443 --tls-cert cert.pem --tls-key key.pem
 
+# Check relay health
+enseal serve --health
+
 # Clients point to your relay
 enseal share .env --relay wss://relay.internal:4443
 # or set it globally
 export ENSEAL_RELAY=wss://relay.internal:4443
+```
+
+With identity mode and a self-hosted relay, sharing is fully codeless:
+
+```bash
+# receiver listens on the relay
+enseal inject --listen --relay wss://relay.internal:4443 -- npm start
+
+# sender pushes directly — no code generated
+enseal share .env --to alex --relay wss://relay.internal:4443
+ok: pushed to alex
 ```
 
 ### Schema Validation
@@ -262,7 +363,8 @@ Validation also runs automatically when receiving `.env` files — catching brok
 ### Environment Profiles
 
 ```bash
-enseal share --env staging    # shares .env.staging
+enseal share --env staging              # shares .env.staging
+enseal validate --env production        # validates .env.production
 enseal diff .env.development .env.production
 ```
 
@@ -282,11 +384,21 @@ The relay never sees plaintext. The wormhole code provides mutual authentication
 
 1. Sender encrypts with the recipient's `age` public key
 2. Sender signs with their own `ed25519` key
-3. Payload transits through relay (or file drop)
+3. Payload transits through relay, file drop, or wormhole
 4. Recipient decrypts with their private key
 5. Recipient verifies the sender's signature
 
-No wormhole code needed. Trust is based on which keys you've imported.
+Trust is based on which keys you've imported.
+
+**Transport options in identity mode:**
+
+| Transport | Flag | How it works |
+|---|---|---|
+| Wormhole (default) | `--to sarah` | Generates a code, like anonymous mode but with signing |
+| Relay push | `--to sarah --relay URL` | Pushes to recipient's deterministic channel, no code |
+| File drop | `--to sarah --output ./dir/` | Produces encrypted `.env.age` file, no network |
+
+With relay push, the recipient listens with `enseal inject --listen --relay URL -- cmd` or receives the file drop with `enseal receive ./file.env.age`.
 
 ## Security Model
 
@@ -326,29 +438,101 @@ required = ["DATABASE_URL", "API_KEY", "JWT_SECRET"]
 
 ```
 CORE
-  enseal share [<file>]             Send secrets (file, pipe, or --secret)
-  enseal receive [<code|file>]      Receive secrets
-  enseal inject <code> -- <cmd>     Inject secrets into a process
-  enseal keys <subcommand>          Manage identity keys and aliases
-  enseal serve                      Run self-hosted relay server
+  enseal share [<file>]              Send secrets (file, pipe, or --secret)
+  enseal receive [<code|file>]       Receive secrets
+  enseal inject [<code>] -- <cmd>    Inject secrets into a process
+  enseal keys <subcommand>           Manage identity keys and aliases
+  enseal serve                       Run self-hosted relay server
 
 .ENV TOOLKIT
-  enseal check [file]               Verify .env has all vars from .env.example
-  enseal diff <file1> <file2>       Compare .env files (keys only)
-  enseal redact <file>              Replace values with <REDACTED>
-  enseal validate <file>            Validate against schema rules
-  enseal template <file>            Generate .env.example with type hints
+  enseal check [file]                Verify .env has all vars from .env.example
+  enseal diff <file1> <file2>        Compare .env files (keys only)
+  enseal redact <file>               Replace values with <REDACTED>
+  enseal validate <file>             Validate against schema rules
+  enseal template <file>             Generate .env.example with type hints
 
 ENCRYPTION
-  enseal encrypt <file>             Encrypt .env for git storage
-  enseal decrypt <file>             Decrypt an encrypted .env
+  enseal encrypt <file>              Encrypt .env for git storage
+  enseal decrypt <file>              Decrypt an encrypted .env
+```
 
-GLOBAL FLAGS
-  --relay <url>                     Self-hosted relay URL
-  --timeout <seconds>               Channel expiry (default: 300)
-  --env <profile>                   Environment profile (.env.<profile>)
-  --verbose / -v                    Debug output (never prints values)
-  --quiet / -q                      Minimal output (for scripting)
+### `share` flags
+
+```
+--to <name>              Identity mode: encrypt to recipient (alias, group, or identity)
+--output <dir>           File drop: write encrypted file (identity mode, no network)
+--secret <value>         Inline secret (raw string or KEY=VALUE)
+--label <name>           Human label for raw/piped secrets
+--as <KEY>               Wrap raw input as KEY=<value>
+--relay <url>            Use specific relay server (also: ENSEAL_RELAY)
+--env <profile>          Environment profile (resolves to .env.<profile>)
+--exclude <pattern>      Regex to exclude vars
+--include <pattern>      Regex to include only matching vars
+--no-filter              Send raw file, skip .env parsing
+--no-interpolate         Don't resolve ${VAR} references before sending
+--words <n>              Number of words in wormhole code (default: 2)
+--timeout <seconds>      Channel expiry (default: 300)
+--quiet / -q             Minimal output
+```
+
+### `receive` flags
+
+```
+--output <path>          Write to specific file
+--clipboard              Copy to clipboard instead of stdout/file
+--no-write               Print to stdout even for .env payloads
+--relay <url>            Use specific relay server
+--quiet / -q             Minimal output
+```
+
+### `inject` flags
+
+```
+--listen                 Listen for incoming identity-mode transfer (requires --relay)
+--relay <url>            Use specific relay server (also: ENSEAL_RELAY)
+--quiet / -q             Minimal output
+```
+
+### `keys` subcommands
+
+```
+enseal keys init                         Generate your keypair
+enseal keys export                       Print your public key bundle
+enseal keys import <file>                Import a colleague's public key
+enseal keys list                         Show all trusted keys and aliases
+enseal keys remove <identity>            Remove a trusted key
+enseal keys fingerprint                  Show your key fingerprint
+enseal keys alias <name> <identity>      Map short name to identity
+enseal keys group create <name>          Create a named group
+enseal keys group add <group> <id>       Add identity to group
+enseal keys group remove <group> <id>    Remove identity from group
+enseal keys group list [name]            List groups or group members
+enseal keys group delete <name>          Delete a group
+```
+
+### `serve` flags
+
+```
+--port <port>            Listen port (default: 4443)
+--bind <addr>            Bind address (default: 0.0.0.0)
+--max-mailboxes <n>      Max concurrent channels (default: 100)
+--channel-ttl <seconds>  Idle channel lifetime (default: 300)
+--health                 Print server health check and exit
+```
+
+### `encrypt` / `decrypt` flags
+
+```
+--per-var                Per-variable encryption (keys visible, values encrypted)
+--to <name>              Encrypt to specific recipients (multi-key)
+```
+
+### Global flags
+
+```
+--verbose / -v           Debug output (never prints secret values)
+--quiet / -q             Minimal output (for scripting)
+--config <path>          Path to .enseal.toml manifest
 ```
 
 ## Comparison

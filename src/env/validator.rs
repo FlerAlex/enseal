@@ -88,6 +88,8 @@ mod tests {
     fn key_starts_with_digit() {
         let env = parser::parse("3SCALE_KEY=value\n").unwrap();
         let issues = validate(&env);
-        assert!(issues.iter().any(|i| i.message.contains("starts with a digit")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("starts with a digit")));
     }
 }

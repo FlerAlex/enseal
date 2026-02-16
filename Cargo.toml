@@ -16,6 +16,7 @@ server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:uuid"]
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -53,6 +54,7 @@ ed25519-dalek = { version = "2", features = ["rand_core", "pem"] }
 rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
+hex = "0.4"
 
 # Transfer (v0.1: anonymous wormhole mode)
 magic-wormhole = "0.7"

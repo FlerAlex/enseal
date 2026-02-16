@@ -26,7 +26,11 @@ pub fn parse(input: &str) -> Result<EnvFile> {
 
         // Must contain '=' for a valid key-value pair
         let Some(eq_pos) = trimmed.find('=') else {
-            bail!("line {}: invalid syntax (no '=' found): {}", line_num + 1, trimmed);
+            bail!(
+                "line {}: invalid syntax (no '=' found): {}",
+                line_num + 1,
+                trimmed
+            );
         };
 
         let key = trimmed[..eq_pos].trim();
@@ -35,10 +39,7 @@ pub fn parse(input: &str) -> Result<EnvFile> {
         if key.is_empty() {
             bail!("line {}: empty key", line_num + 1);
         }
-        if !key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             tracing::warn!(
                 "line {}: key '{}' contains non-standard characters",
                 line_num + 1,
@@ -116,10 +117,7 @@ fn strip_quotes(raw: &str, quote: char, line_num: usize) -> Result<String> {
                     let rest: String = chars.collect();
                     let rest = rest.trim();
                     if !rest.is_empty() && !rest.starts_with('#') {
-                        bail!(
-                            "line {}: unexpected content after closing quote",
-                            line_num
-                        );
+                        bail!("line {}: unexpected content after closing quote", line_num);
                     }
                     return Ok(result);
                 }
@@ -132,10 +130,7 @@ fn strip_quotes(raw: &str, quote: char, line_num: usize) -> Result<String> {
         if let Some(end) = inner.find(quote) {
             let rest = inner[end + 1..].trim();
             if !rest.is_empty() && !rest.starts_with('#') {
-                bail!(
-                    "line {}: unexpected content after closing quote",
-                    line_num
-                );
+                bail!("line {}: unexpected content after closing quote", line_num);
             }
             Ok(inner[..end].to_string())
         } else {

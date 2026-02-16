@@ -36,8 +36,7 @@ pub struct ReceiveArgs {
 
 pub async fn run(args: ReceiveArgs) -> Result<()> {
     // Detect mode: file drop (.env.age file) vs wormhole code
-    let is_file = std::path::Path::new(&args.code).exists()
-        && args.code.ends_with(".age");
+    let is_file = std::path::Path::new(&args.code).exists() && args.code.ends_with(".age");
 
     let envelope = if is_file {
         receive_filedrop(&args)?

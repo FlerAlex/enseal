@@ -156,8 +156,7 @@ fn no_plaintext_in_encrypted_output() {
     assert!(!ciphertext_str.contains("VERY_SECRET_TOKEN"));
 
     // Per-variable
-    let env =
-        parser::parse("VERY_SECRET_TOKEN=sk_live_should_not_appear\n").unwrap();
+    let env = parser::parse("VERY_SECRET_TOKEN=sk_live_should_not_appear\n").unwrap();
     let encrypted = at_rest::encrypt_per_var(&env, &[&id.age_recipient]).unwrap();
     let encrypted_str = encrypted.to_string();
     assert!(encrypted_str.contains("VERY_SECRET_TOKEN=")); // key IS visible

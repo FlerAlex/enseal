@@ -3,6 +3,7 @@ use base64::Engine;
 use clap::{Parser, Subcommand};
 
 use crate::keys::alias;
+use crate::keys::group;
 use crate::keys::identity::{format_pubkey_file, EnsealIdentity, TrustedKey};
 use crate::keys::store::KeyStore;
 use crate::ui::display;
@@ -47,6 +48,51 @@ pub enum KeysCommand {
         /// Full identity (e.g. alice@example.com)
         identity: String,
     },
+
+    /// Manage recipient groups
+    Group {
+        #[command(subcommand)]
+        command: GroupCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GroupCommand {
+    /// Create a named recipient group
+    Create {
+        /// Group name
+        name: String,
+    },
+
+    /// Add an identity to a group
+    Add {
+        /// Group name
+        group: String,
+
+        /// Identity to add
+        identity: String,
+    },
+
+    /// Remove an identity from a group
+    Remove {
+        /// Group name
+        group: String,
+
+        /// Identity to remove
+        identity: String,
+    },
+
+    /// List groups or members of a specific group
+    List {
+        /// Show members of this group (omit to list all groups)
+        name: Option<String>,
+    },
+
+    /// Delete a group
+    Delete {
+        /// Group name
+        name: String,
+    },
 }
 
 pub fn run(args: KeysArgs) -> Result<()> {
@@ -58,6 +104,7 @@ pub fn run(args: KeysArgs) -> Result<()> {
         KeysCommand::Remove { identity } => cmd_remove(&identity),
         KeysCommand::Fingerprint => cmd_fingerprint(),
         KeysCommand::Alias { name, identity } => cmd_alias(&name, &identity),
+        KeysCommand::Group { command } => cmd_group(command),
     }
 }
 
@@ -65,7 +112,9 @@ fn cmd_init() -> Result<()> {
     let store = KeyStore::open()?;
 
     if store.is_initialized() {
-        display::warning("keys already initialized. Use 'enseal keys export' to view your public key.");
+        display::warning(
+            "keys already initialized. Use 'enseal keys export' to view your public key.",
+        );
         return Ok(());
     }
 
@@ -169,6 +218,20 @@ fn cmd_list() -> Result<()> {
         }
     }
 
+    // Groups
+    let groups = group::list_groups(&store)?;
+    if !groups.is_empty() {
+        println!();
+        println!("Groups:");
+        for (name, entry) in &groups {
+            if entry.members.is_empty() {
+                println!("  {} (empty)", name);
+            } else {
+                println!("  {} ({})", name, entry.members.join(", "));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -197,6 +260,75 @@ fn cmd_alias(name: &str, identity: &str) -> Result<()> {
     let store = KeyStore::open()?;
     alias::set(&store, name, identity)?;
     display::ok(&format!("alias '{}' -> '{}'", name, identity));
+    Ok(())
+}
+
+fn cmd_group(command: GroupCommand) -> Result<()> {
+    let store = KeyStore::open()?;
+
+    match command {
+        GroupCommand::Create { name } => {
+            group::create(&store, &name)?;
+            display::ok(&format!("created group '{}'", name));
+        }
+        GroupCommand::Add {
+            group: grp,
+            identity,
+        } => {
+            if group::add_member(&store, &grp, &identity)? {
+                display::ok(&format!("added '{}' to group '{}'", identity, grp));
+            } else {
+                display::warning(&format!("'{}' is already a member of '{}'", identity, grp));
+            }
+        }
+        GroupCommand::Remove {
+            group: grp,
+            identity,
+        } => {
+            if group::remove_member(&store, &grp, &identity)? {
+                display::ok(&format!("removed '{}' from group '{}'", identity, grp));
+            } else {
+                display::warning(&format!("'{}' is not a member of '{}'", identity, grp));
+            }
+        }
+        GroupCommand::List { name } => {
+            if let Some(name) = name {
+                match group::get_members(&store, &name)? {
+                    Some(members) => {
+                        println!("Group '{}':", name);
+                        if members.is_empty() {
+                            println!("  (no members)");
+                        } else {
+                            for m in &members {
+                                println!("  {}", m);
+                            }
+                        }
+                    }
+                    None => {
+                        bail!("group '{}' does not exist", name);
+                    }
+                }
+            } else {
+                let groups = group::list_groups(&store)?;
+                if groups.is_empty() {
+                    println!("No groups. Create one with: enseal keys group create <name>");
+                } else {
+                    println!("Groups:");
+                    for (name, entry) in &groups {
+                        println!("  {} ({} members)", name, entry.members.len());
+                    }
+                }
+            }
+        }
+        GroupCommand::Delete { name } => {
+            if group::delete_group(&store, &name)? {
+                display::ok(&format!("deleted group '{}'", name));
+            } else {
+                bail!("group '{}' does not exist", name);
+            }
+        }
+    }
+
     Ok(())
 }
 

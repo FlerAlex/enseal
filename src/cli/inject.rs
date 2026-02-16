@@ -6,6 +6,7 @@ use clap::Args;
 
 use crate::cli::input::PayloadFormat;
 use crate::crypto::envelope::Envelope;
+use crate::crypto::signing::SignedEnvelope;
 use crate::keys;
 use crate::transfer;
 use crate::ui::display;
@@ -13,7 +14,11 @@ use crate::ui::display;
 #[derive(Args)]
 pub struct InjectArgs {
     /// Wormhole share code or path to .env.age file
-    pub code: String,
+    pub code: Option<String>,
+
+    /// Listen for incoming identity-mode transfer (requires --relay)
+    #[arg(long)]
+    pub listen: bool,
 
     /// Separator between inject args and the command to run
     #[arg(
@@ -38,8 +43,20 @@ pub async fn run(args: InjectArgs) -> Result<()> {
         bail!("no command specified. Usage: enseal inject <code> -- <command>");
     }
 
+    if !args.listen && args.code.is_none() {
+        bail!("provide a wormhole code or use --listen. Usage: enseal inject <code> -- <command>");
+    }
+
+    if args.listen && args.code.is_some() {
+        bail!("--listen and a wormhole code are mutually exclusive");
+    }
+
     // 1. Receive the envelope
-    let envelope = receive_envelope(&args).await?;
+    let envelope = if args.listen {
+        listen_mode(&args).await?
+    } else {
+        receive_envelope(&args).await?
+    };
 
     // 2. Extract secrets as env vars
     let secrets = extract_secrets(&envelope)?;
@@ -54,13 +71,15 @@ pub async fn run(args: InjectArgs) -> Result<()> {
 }
 
 async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
+    let code = args.code.as_deref().expect("code required in non-listen mode");
+
     // Detect mode: file drop (.env.age file) vs wormhole code
-    let is_file = std::path::Path::new(&args.code).exists() && args.code.ends_with(".age");
+    let is_file = std::path::Path::new(code).exists() && code.ends_with(".age");
 
     if is_file {
         let store = keys::store::KeyStore::open()?;
         let own_identity = keys::identity::EnsealIdentity::load(&store)?;
-        let path = std::path::Path::new(&args.code);
+        let path = std::path::Path::new(code);
         let (envelope, sender_pubkey) = transfer::filedrop::read(path, &own_identity, None)?;
         if !args.quiet {
             display::info("From:", &sender_pubkey);
@@ -73,7 +92,7 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
         if store.is_initialized() {
             let own_identity = keys::identity::EnsealIdentity::load(&store)?;
             match transfer::identity::receive(
-                &args.code,
+                code,
                 &own_identity,
                 None,
                 args.relay.as_deref(),
@@ -93,9 +112,39 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
             }
         }
 
-        let envelope = transfer::wormhole::receive(&args.code, args.relay.as_deref()).await?;
+        let envelope = transfer::wormhole::receive(code, args.relay.as_deref()).await?;
         Ok(envelope)
     }
+}
+
+async fn listen_mode(args: &InjectArgs) -> Result<Envelope> {
+    let relay_url = args.relay.as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--listen requires --relay or ENSEAL_RELAY"))?;
+
+    let store = keys::store::KeyStore::open()?;
+    let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+    let channel_id = own_identity.channel_id();
+
+    if !args.quiet {
+        display::info("Listening on:", relay_url);
+        display::info("Channel:", &channel_id[..12]);
+        display::ok("waiting for incoming transfer...");
+    }
+
+    let data = transfer::relay::listen(relay_url, &channel_id).await?;
+
+    // Parse and verify signed envelope
+    let signed = SignedEnvelope::from_bytes(&data)?;
+    let sender_pubkey = signed.sender_age_pubkey.clone();
+    let inner_bytes = signed.open(&own_identity, None)?;
+    let envelope = Envelope::from_bytes(&inner_bytes)?;
+
+    if !args.quiet {
+        display::info("From:", &sender_pubkey);
+        display::ok("signature verified");
+    }
+
+    Ok(envelope)
 }
 
 fn extract_secrets(envelope: &Envelope) -> Result<HashMap<String, String>> {
@@ -175,8 +224,14 @@ fn setup_signal_forwarding(child_pid: u32) {
     CHILD_PID.store(child_pid, Ordering::SeqCst);
 
     unsafe {
-        libc::signal(libc::SIGINT, forward_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, forward_signal as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            forward_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            forward_signal as *const () as libc::sighandler_t,
+        );
     }
 
     extern "C" fn forward_signal(sig: libc::c_int) {

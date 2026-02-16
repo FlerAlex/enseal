@@ -11,7 +11,9 @@ fn inject_help_shows_usage() {
         .args(["inject", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Receive secrets and inject into a child process"));
+        .stdout(predicate::str::contains(
+            "Receive secrets and inject into a child process",
+        ));
 }
 
 #[test]

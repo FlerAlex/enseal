@@ -52,7 +52,10 @@ pub fn run(args: CheckArgs) -> Result<()> {
     }
 
     if !d.only_right.is_empty() {
-        display::warning(&format!("extra in {} (not in {}):", args.file, args.example));
+        display::warning(&format!(
+            "extra in {} (not in {}):",
+            args.file, args.example
+        ));
         for key in &d.only_right {
             eprintln!("  {}", key);
         }

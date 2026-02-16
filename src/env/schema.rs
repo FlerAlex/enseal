@@ -207,8 +207,8 @@ pub fn load_schema(config_path: Option<&str>) -> Result<Option<Schema>> {
         .with_context(|| format!("failed to read {}", path.display()))?;
 
     // Parse the whole TOML and extract the schema section
-    let doc: toml::Value = toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let doc: toml::Value =
+        toml::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))?;
 
     if let Some(schema_value) = doc.get("schema") {
         let schema: Schema = schema_value
@@ -288,7 +288,11 @@ mod tests {
         ).unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.is_empty(), "unexpected errors: {:?}", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>());
+        assert!(
+            errors.is_empty(),
+            "unexpected errors: {:?}",
+            errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -307,18 +311,28 @@ mod tests {
 
     #[test]
     fn invalid_integer() {
-        let env = parser::parse("DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=abc\n").unwrap();
+        let env = parser::parse(
+            "DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=abc\n",
+        )
+        .unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "PORT" && e.message.contains("not an integer")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "PORT" && e.message.contains("not an integer")));
     }
 
     #[test]
     fn integer_out_of_range() {
-        let env = parser::parse("DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=80\n").unwrap();
+        let env = parser::parse(
+            "DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=80\n",
+        )
+        .unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "PORT" && e.message.contains("outside range")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "PORT" && e.message.contains("outside range")));
     }
 
     #[test]
@@ -326,7 +340,9 @@ mod tests {
         let env = parser::parse("DATABASE_URL=mysql://localhost/mydb\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=3000\n").unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "DATABASE_URL" && e.message.contains("pattern")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "DATABASE_URL" && e.message.contains("pattern")));
     }
 
     #[test]
@@ -334,7 +350,9 @@ mod tests {
         let env = parser::parse("DATABASE_URL=postgres://x\nAPI_KEY=short\nPORT=3000\n").unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "API_KEY" && e.message.contains("below minimum")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "API_KEY" && e.message.contains("below minimum")));
     }
 
     #[test]
@@ -342,7 +360,9 @@ mod tests {
         let env = parser::parse("DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=3000\nDEBUG=maybe\n").unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "DEBUG" && e.message.contains("not a boolean")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "DEBUG" && e.message.contains("not a boolean")));
     }
 
     #[test]
@@ -350,7 +370,9 @@ mod tests {
         let env = parser::parse("DATABASE_URL=postgres://x\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456\nPORT=3000\nLOG_LEVEL=trace\n").unwrap();
         let schema = make_schema();
         let errors = validate(&env, &schema);
-        assert!(errors.iter().any(|e| e.key == "LOG_LEVEL" && e.message.contains("not in allowed")));
+        assert!(errors
+            .iter()
+            .any(|e| e.key == "LOG_LEVEL" && e.message.contains("not in allowed")));
     }
 
     #[test]
@@ -377,9 +399,6 @@ enum = ["debug", "info", "warn", "error"]
         assert!(schema.rules.contains_key("PORT"));
         assert!(schema.rules.contains_key("DB_URL"));
         assert!(schema.rules.contains_key("LOG_LEVEL"));
-        assert_eq!(
-            schema.rules["PORT"].var_type.as_deref(),
-            Some("integer")
-        );
+        assert_eq!(schema.rules["PORT"].var_type.as_deref(), Some("integer"));
     }
 }

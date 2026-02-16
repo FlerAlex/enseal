@@ -1,0 +1,23 @@
+image:
+  repository: enseal/relay
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+relay:
+  port: 4443
+  maxMailboxes: 100
+  channelTtl: 300
+
+service:
+  type: ClusterIP
+  port: 4443
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi

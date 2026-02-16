@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 
-use crate::env::{EnvFile, Entry};
+use crate::env::{Entry, EnvFile};
 
 const PER_VAR_PREFIX: &str = "ENC[age:";
 const PER_VAR_SUFFIX: &str = "]";
@@ -22,10 +22,7 @@ pub fn encrypt_whole_file(
 }
 
 /// Decrypt a whole-file age ciphertext with the given identity.
-pub fn decrypt_whole_file(
-    ciphertext: &[u8],
-    identity: &age::x25519::Identity,
-) -> Result<Vec<u8>> {
+pub fn decrypt_whole_file(ciphertext: &[u8], identity: &age::x25519::Identity) -> Result<Vec<u8>> {
     age_decrypt(ciphertext, identity)
 }
 
@@ -35,10 +32,7 @@ pub fn decrypt_whole_file(
 
 /// Encrypt an EnvFile per-variable: keys stay visible, values become `ENC[age:...]`.
 /// Returns a new EnvFile where each value is individually encrypted.
-pub fn encrypt_per_var(
-    env: &EnvFile,
-    recipients: &[&age::x25519::Recipient],
-) -> Result<EnvFile> {
+pub fn encrypt_per_var(env: &EnvFile, recipients: &[&age::x25519::Recipient]) -> Result<EnvFile> {
     let mut result = EnvFile::new();
 
     for entry in &env.entries {
@@ -62,10 +56,7 @@ pub fn encrypt_per_var(
 
 /// Decrypt an EnvFile where values are `ENC[age:...]`.
 /// Returns a new EnvFile with decrypted plaintext values.
-pub fn decrypt_per_var(
-    env: &EnvFile,
-    identity: &age::x25519::Identity,
-) -> Result<EnvFile> {
+pub fn decrypt_per_var(env: &EnvFile, identity: &age::x25519::Identity) -> Result<EnvFile> {
     let mut result = EnvFile::new();
 
     for entry in &env.entries {
@@ -75,11 +66,14 @@ pub fn decrypt_per_var(
                     let encoded = &value[PER_VAR_PREFIX.len()..value.len() - PER_VAR_SUFFIX.len()];
                     let ciphertext = base64::engine::general_purpose::STANDARD
                         .decode(encoded)
-                        .with_context(|| format!("invalid base64 in encrypted value for '{}'", key))?;
+                        .with_context(|| {
+                            format!("invalid base64 in encrypted value for '{}'", key)
+                        })?;
                     let plaintext = age_decrypt(&ciphertext, identity)
                         .with_context(|| format!("failed to decrypt value for '{}'", key))?;
-                    String::from_utf8(plaintext)
-                        .with_context(|| format!("decrypted value for '{}' is not valid UTF-8", key))?
+                    String::from_utf8(plaintext).with_context(|| {
+                        format!("decrypted value for '{}' is not valid UTF-8", key)
+                    })?
                 } else {
                     value.clone()
                 };
@@ -132,20 +126,15 @@ pub fn is_age_encrypted(content: &[u8]) -> bool {
 // Age helpers (multi-recipient)
 // ---------------------------------------------------------------------------
 
-fn age_encrypt_multi(
-    data: &[u8],
-    recipients: &[&age::x25519::Recipient],
-) -> Result<Vec<u8>> {
+fn age_encrypt_multi(data: &[u8], recipients: &[&age::x25519::Recipient]) -> Result<Vec<u8>> {
     if recipients.is_empty() {
         bail!("at least one recipient is required for encryption");
     }
 
-    let recipients_iter = recipients
-        .iter()
-        .map(|r| *r as &dyn age::Recipient);
+    let recipients_iter = recipients.iter().map(|r| *r as &dyn age::Recipient);
 
-    let encryptor = age::Encryptor::with_recipients(recipients_iter)
-        .expect("recipients should not be empty");
+    let encryptor =
+        age::Encryptor::with_recipients(recipients_iter).expect("recipients should not be empty");
 
     let mut encrypted = vec![];
     let mut writer = encryptor
@@ -155,14 +144,15 @@ fn age_encrypt_multi(
     writer
         .write_all(data)
         .context("failed to write age ciphertext")?;
-    writer.finish().context("failed to finalize age encryption")?;
+    writer
+        .finish()
+        .context("failed to finalize age encryption")?;
 
     Ok(encrypted)
 }
 
 fn age_decrypt(ciphertext: &[u8], identity: &age::x25519::Identity) -> Result<Vec<u8>> {
-    let decryptor =
-        age::Decryptor::new(&ciphertext[..]).context("failed to read age header")?;
+    let decryptor = age::Decryptor::new(&ciphertext[..]).context("failed to read age header")?;
 
     let mut reader = decryptor
         .decrypt(std::iter::once(identity as &dyn age::Identity))
@@ -220,7 +210,11 @@ mod tests {
 
         // Values should be encrypted
         for (_, value) in encrypted.vars() {
-            assert!(is_encrypted_value(value), "value should be encrypted: {}", value);
+            assert!(
+                is_encrypted_value(value),
+                "value should be encrypted: {}",
+                value
+            );
         }
 
         // No plaintext values
@@ -279,8 +273,7 @@ mod tests {
         let id2 = EnsealIdentity::generate();
         let env = parser::parse("SECRET=value\n").unwrap();
 
-        let encrypted =
-            encrypt_per_var(&env, &[&id1.age_recipient, &id2.age_recipient]).unwrap();
+        let encrypted = encrypt_per_var(&env, &[&id1.age_recipient, &id2.age_recipient]).unwrap();
 
         let d1 = decrypt_per_var(&encrypted, &id1.age_identity).unwrap();
         assert_eq!(d1.vars(), env.vars());

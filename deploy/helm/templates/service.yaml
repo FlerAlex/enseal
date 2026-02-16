@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-relay
+  labels:
+    app: enseal-relay
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: relay
+      protocol: TCP
+      name: relay
+  selector:
+    app: enseal-relay

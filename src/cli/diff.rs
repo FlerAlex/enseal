@@ -35,12 +35,7 @@ pub fn run(args: DiffArgs) -> Result<()> {
     }
 
     for key in &d.only_left {
-        println!(
-            "{} {:<30} (only in {})",
-            style("-").red(),
-            key,
-            args.file1
-        );
+        println!("{} {:<30} (only in {})", style("-").red(), key, args.file1);
     }
     for key in &d.only_right {
         println!(

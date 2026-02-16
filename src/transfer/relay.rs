@@ -68,6 +68,18 @@ pub async fn receive(relay_url: &str, code: &str) -> Result<Vec<u8>> {
     anyhow::bail!("relay connection ended without receiving data")
 }
 
+/// Push data to a relay channel (identity mode sender).
+/// The channel_id is derived from the recipient's identity.
+pub async fn push(data: &[u8], relay_url: &str, channel_id: &str) -> Result<()> {
+    send(data, relay_url, channel_id).await
+}
+
+/// Listen on a relay channel for incoming data (identity mode receiver).
+/// The channel_id is derived from own identity.
+pub async fn listen(relay_url: &str, channel_id: &str) -> Result<Vec<u8>> {
+    receive(relay_url, channel_id).await
+}
+
 /// Generate a short channel code for relay transport.
 pub fn generate_code() -> String {
     use rand::Rng;
@@ -75,12 +87,11 @@ pub fn generate_code() -> String {
     let num: u32 = rng.gen_range(1000..9999);
     // Use a simple word list for human-friendly codes
     let words = [
-        "alpha", "bravo", "delta", "echo", "foxtrot", "golf", "hotel", "india",
-        "juliet", "kilo", "lima", "mike", "nova", "oscar", "papa", "romeo",
-        "sierra", "tango", "ultra", "victor", "whiskey", "xray", "yankee", "zulu",
-        "amber", "bronze", "coral", "dusk", "ember", "frost", "glacier", "harbor",
-        "ivory", "jade", "karma", "lemon", "marble", "nectar", "opal", "prism",
-        "quartz", "ruby", "sage", "topaz", "umbra", "velvet", "willow", "zenith",
+        "alpha", "bravo", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo",
+        "lima", "mike", "nova", "oscar", "papa", "romeo", "sierra", "tango", "ultra", "victor",
+        "whiskey", "xray", "yankee", "zulu", "amber", "bronze", "coral", "dusk", "ember", "frost",
+        "glacier", "harbor", "ivory", "jade", "karma", "lemon", "marble", "nectar", "opal",
+        "prism", "quartz", "ruby", "sage", "topaz", "umbra", "velvet", "willow", "zenith",
     ];
     let w1 = words[rng.gen_range(0..words.len())];
     let w2 = words[rng.gen_range(0..words.len())];
@@ -109,11 +120,23 @@ mod tests {
 
     #[test]
     fn normalize_urls() {
-        assert_eq!(normalize_ws_url("http://localhost:4443"), "ws://localhost:4443");
-        assert_eq!(normalize_ws_url("https://relay.example.com"), "wss://relay.example.com");
+        assert_eq!(
+            normalize_ws_url("http://localhost:4443"),
+            "ws://localhost:4443"
+        );
+        assert_eq!(
+            normalize_ws_url("https://relay.example.com"),
+            "wss://relay.example.com"
+        );
         assert_eq!(normalize_ws_url("ws://relay:4443/"), "ws://relay:4443");
-        assert_eq!(normalize_ws_url("wss://relay.internal"), "wss://relay.internal");
-        assert_eq!(normalize_ws_url("relay.example.com:4443"), "ws://relay.example.com:4443");
+        assert_eq!(
+            normalize_ws_url("wss://relay.internal"),
+            "wss://relay.internal"
+        );
+        assert_eq!(
+            normalize_ws_url("relay.example.com:4443"),
+            "ws://relay.example.com:4443"
+        );
     }
 
     #[test]

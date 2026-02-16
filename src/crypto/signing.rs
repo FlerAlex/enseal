@@ -18,14 +18,14 @@ pub struct SignedEnvelope {
 }
 
 impl SignedEnvelope {
-    /// Encrypt an inner envelope to the recipient and sign with the sender's key.
+    /// Encrypt an inner envelope to one or more recipients and sign with the sender's key.
     pub fn seal(
         inner_bytes: &[u8],
-        recipient: &age::x25519::Recipient,
+        recipients: &[&age::x25519::Recipient],
         sender: &EnsealIdentity,
     ) -> Result<Self> {
-        // Encrypt with age to recipient's public key
-        let ciphertext = age_encrypt(inner_bytes, recipient)?;
+        // Encrypt with age to recipients' public keys
+        let ciphertext = age_encrypt_multi(inner_bytes, recipients)?;
 
         // Sign the ciphertext
         let signature = sender.signing_key.sign(&ciphertext);
@@ -80,7 +80,9 @@ impl SignedEnvelope {
 
         verifying_key
             .verify(&self.ciphertext, &signature)
-            .map_err(|_| anyhow::anyhow!("signature verification failed: payload may be tampered"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("signature verification failed: payload may be tampered")
+            })?;
 
         // Decrypt with own age key
         let plaintext = age_decrypt(&self.ciphertext, &own_identity.age_identity)?;
@@ -99,11 +101,12 @@ impl SignedEnvelope {
     }
 }
 
-/// Encrypt data with age to a single recipient.
-fn age_encrypt(data: &[u8], recipient: &age::x25519::Recipient) -> Result<Vec<u8>> {
+/// Encrypt data with age to one or more recipients.
+fn age_encrypt_multi(data: &[u8], recipients: &[&age::x25519::Recipient]) -> Result<Vec<u8>> {
+    let recipients_iter = recipients.iter().map(|r| *r as &dyn age::Recipient);
+
     let encryptor =
-        age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
-            .expect("recipients should not be empty");
+        age::Encryptor::with_recipients(recipients_iter).expect("recipients should not be empty");
 
     let mut encrypted = vec![];
     let mut writer = encryptor
@@ -114,15 +117,16 @@ fn age_encrypt(data: &[u8], recipient: &age::x25519::Recipient) -> Result<Vec<u8
     writer
         .write_all(data)
         .context("failed to write age ciphertext")?;
-    writer.finish().context("failed to finalize age encryption")?;
+    writer
+        .finish()
+        .context("failed to finalize age encryption")?;
 
     Ok(encrypted)
 }
 
 /// Decrypt age-encrypted data with own identity.
 fn age_decrypt(ciphertext: &[u8], identity: &age::x25519::Identity) -> Result<Vec<u8>> {
-    let decryptor =
-        age::Decryptor::new(&ciphertext[..]).context("failed to read age header")?;
+    let decryptor = age::Decryptor::new(&ciphertext[..]).context("failed to read age header")?;
 
     let mut reader = decryptor
         .decrypt(std::iter::once(identity as &dyn age::Identity))
@@ -147,7 +151,7 @@ mod tests {
         let receiver = EnsealIdentity::generate();
 
         let plaintext = b"SECRET=hunter2\nAPI_KEY=abc123\n";
-        let signed = SignedEnvelope::seal(plaintext, &receiver.age_recipient, &sender).unwrap();
+        let signed = SignedEnvelope::seal(plaintext, &[&receiver.age_recipient], &sender).unwrap();
 
         let bytes = signed.to_bytes().unwrap();
         let restored = SignedEnvelope::from_bytes(&bytes).unwrap();
@@ -163,7 +167,7 @@ mod tests {
 
         let plaintext = b"SECRET=value";
         let mut signed =
-            SignedEnvelope::seal(plaintext, &receiver.age_recipient, &sender).unwrap();
+            SignedEnvelope::seal(plaintext, &[&receiver.age_recipient], &sender).unwrap();
 
         // Tamper with ciphertext
         if let Some(byte) = signed.ciphertext.last_mut() {
@@ -181,8 +185,7 @@ mod tests {
         let wrong_receiver = EnsealIdentity::generate();
 
         let plaintext = b"SECRET=value";
-        let signed =
-            SignedEnvelope::seal(plaintext, &receiver.age_recipient, &sender).unwrap();
+        let signed = SignedEnvelope::seal(plaintext, &[&receiver.age_recipient], &sender).unwrap();
 
         let result = signed.open(&wrong_receiver, None);
         assert!(result.is_err());
@@ -195,8 +198,7 @@ mod tests {
         let fake_trusted = EnsealIdentity::generate();
 
         let plaintext = b"SECRET=value";
-        let signed =
-            SignedEnvelope::seal(plaintext, &receiver.age_recipient, &sender).unwrap();
+        let signed = SignedEnvelope::seal(plaintext, &[&receiver.age_recipient], &sender).unwrap();
 
         // Construct a TrustedKey from the fake_trusted identity
         let trusted = TrustedKey {
@@ -207,6 +209,9 @@ mod tests {
 
         let result = signed.open(&receiver, Some(&trusted));
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("sender key mismatch"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("sender key mismatch"));
     }
 }

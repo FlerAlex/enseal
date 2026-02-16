@@ -31,11 +31,7 @@ pub fn resolve(profile: &str, dir: &Path) -> Result<PathBuf> {
 /// Resolve a file argument that might be a profile name or a path.
 /// If `env_profile` is Some, it takes priority and resolves to `.env.<profile>`.
 /// Otherwise, falls back to the given file path (or default `.env`).
-pub fn resolve_file(
-    file: Option<&str>,
-    env_profile: Option<&str>,
-    dir: &Path,
-) -> Result<PathBuf> {
+pub fn resolve_file(file: Option<&str>, env_profile: Option<&str>, dir: &Path) -> Result<PathBuf> {
     if let Some(profile) = env_profile {
         return resolve(profile, dir);
     }

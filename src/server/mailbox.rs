@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
@@ -13,6 +15,9 @@ pub struct RelayState {
     channels: Mutex<HashMap<String, Channel>>,
     max_channels: usize,
     channel_ttl_secs: u64,
+    connection_log: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    rate_limit_per_min: usize,
+    max_payload_bytes: usize,
 }
 
 struct Channel {
@@ -24,11 +29,34 @@ struct Channel {
 }
 
 impl RelayState {
-    pub fn new(max_channels: usize, channel_ttl_secs: u64) -> Self {
+    pub fn new(
+        max_channels: usize,
+        channel_ttl_secs: u64,
+        max_payload_bytes: usize,
+        rate_limit_per_min: usize,
+    ) -> Self {
         Self {
             channels: Mutex::new(HashMap::new()),
             max_channels,
             channel_ttl_secs,
+            connection_log: Mutex::new(HashMap::new()),
+            rate_limit_per_min,
+            max_payload_bytes,
+        }
+    }
+
+    /// Check if the given IP is within the rate limit.
+    /// Returns true if the connection is allowed, false if rate-limited.
+    async fn check_rate_limit(&self, ip: IpAddr) -> bool {
+        let mut log = self.connection_log.lock().await;
+        let entries = log.entry(ip).or_default();
+        let cutoff = Instant::now() - std::time::Duration::from_secs(60);
+        entries.retain(|t| *t > cutoff);
+        if entries.len() >= self.rate_limit_per_min {
+            false
+        } else {
+            entries.push(Instant::now());
+            true
         }
     }
 }
@@ -37,12 +65,20 @@ impl RelayState {
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Path(code): Path<String>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<RelayState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, code, state))
+    if !state.check_rate_limit(addr.ip()).await {
+        tracing::warn!(ip = %addr.ip(), "rate limit exceeded");
+        return (axum::http::StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
+            .into_response();
+    }
+    let max_payload = state.max_payload_bytes;
+    ws.on_upgrade(move |socket| handle_socket(socket, code, state, max_payload))
+        .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>) {
+async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>, max_payload_bytes: usize) {
     use futures_util::{SinkExt, StreamExt};
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -92,10 +128,17 @@ async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>) 
         });
 
         // Forward: second client -> first client
+        let max_payload_second = max_payload_bytes;
         let forward_second = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_rx.next().await {
                 if matches!(msg, Message::Close(_)) {
                     break;
+                }
+                if let Message::Binary(ref data) = msg {
+                    if data.len() > max_payload_second {
+                        tracing::warn!("payload size {} exceeds limit {}", data.len(), max_payload_second);
+                        break;
+                    }
                 }
                 if first_client_tx.send(msg).await.is_err() {
                     break;
@@ -144,10 +187,17 @@ async fn handle_socket(socket: WebSocket, code: String, state: Arc<RelayState>) 
 
         // Forward: first client sends -> from_first_tx (stored for second client)
         let code_clone = code.clone();
+        let max_payload_first = max_payload_bytes;
         let forward_outgoing = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_rx.next().await {
                 if matches!(msg, Message::Close(_)) {
                     break;
+                }
+                if let Message::Binary(ref data) = msg {
+                    if data.len() > max_payload_first {
+                        tracing::warn!("payload size {} exceeds limit {}", data.len(), max_payload_first);
+                        break;
+                    }
                 }
                 if from_first_tx.send(msg).await.is_err() {
                     break;

@@ -3,6 +3,7 @@ use clap::Args;
 
 use crate::cli::input;
 use crate::crypto::envelope::Envelope;
+use crate::crypto::signing::SignedEnvelope;
 use crate::env::{self, filter};
 use crate::keys;
 use crate::transfer;
@@ -106,8 +107,7 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         };
 
         // Apply filters
-        let filtered =
-            filter::filter(&env_file, args.include.as_deref(), args.exclude.as_deref())?;
+        let filtered = filter::filter(&env_file, args.include.as_deref(), args.exclude.as_deref())?;
 
         filtered.to_string()
     } else {
@@ -160,38 +160,70 @@ async fn send_identity_mode(
     envelope: &Envelope,
     recipient_name: &str,
 ) -> Result<()> {
-    // Resolve recipient
-    let identity_name = keys::resolve_recipient(recipient_name)?;
+    // Resolve recipient (may be alias, group, or literal identity)
+    let identities = keys::resolve_to_identities(recipient_name)?;
 
     let store = keys::store::KeyStore::open()?;
     let sender = keys::identity::EnsealIdentity::load(&store)?;
-    let recipient = keys::identity::TrustedKey::load(&store, &identity_name)?;
+
+    // Load all trusted keys and collect age recipients
+    let trusted_keys: Vec<keys::identity::TrustedKey> = identities
+        .iter()
+        .map(|id| keys::identity::TrustedKey::load(&store, id))
+        .collect::<Result<Vec<_>>>()?;
+    let age_recipients: Vec<&age::x25519::Recipient> =
+        trusted_keys.iter().map(|k| &k.age_recipient).collect();
+
+    let display_name = if identities.len() == 1 {
+        identities[0].clone()
+    } else {
+        format!("{} ({} recipients)", recipient_name, identities.len())
+    };
 
     if !args.quiet {
-        display::info("To:", &identity_name);
-        display::info("Fingerprint:", &recipient.fingerprint());
+        display::info("To:", &display_name);
+        if identities.len() == 1 {
+            display::info("Fingerprint:", &trusted_keys[0].fingerprint());
+        }
     }
 
     if let Some(ref output_dir) = args.output {
-        // File drop mode
+        // File drop mode — use group name or identity for filename
+        let filename = if identities.len() > 1 {
+            recipient_name.to_string()
+        } else {
+            identities[0].clone()
+        };
         let dest = transfer::filedrop::write(
             envelope,
-            &recipient,
+            &age_recipients,
             &sender,
             std::path::Path::new(output_dir),
+            &filename,
         )?;
         display::ok(&format!(
             "encrypted to {}, written to {}",
-            identity_name,
+            display_name,
             dest.display()
         ));
+    } else if let Some(ref relay_url) = args.relay {
+        // Enseal relay push mode — no code needed
+        let inner_bytes = envelope.to_bytes()?;
+        let signed = SignedEnvelope::seal(&inner_bytes, &age_recipients, &sender)?;
+        let wire_bytes = signed.to_bytes()?;
+
+        let channel_id = trusted_keys[0].channel_id();
+
+        transfer::relay::push(&wire_bytes, relay_url, &channel_id).await?;
+
+        display::ok(&format!("pushed to {}", display_name));
     } else {
-        // Identity relay mode
+        // Wormhole mode (default)
         let code = transfer::identity::send(
             envelope,
-            &recipient,
+            &age_recipients,
             &sender,
-            args.relay.as_deref(),
+            None,
             args.words,
         )
         .await?;
@@ -202,7 +234,7 @@ async fn send_identity_mode(
             println!("{}", code);
         }
 
-        display::ok(&format!("encrypted to {}, signed by you", identity_name));
+        display::ok(&format!("encrypted to {}, signed by you", display_name));
     }
 
     Ok(())

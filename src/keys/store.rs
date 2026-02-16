@@ -71,6 +71,10 @@ impl KeyStore {
         self.base_dir.join("aliases.toml")
     }
 
+    pub fn groups_path(&self) -> PathBuf {
+        self.base_dir.join("groups.toml")
+    }
+
     /// Check whether own keys have been initialized.
     pub fn is_initialized(&self) -> bool {
         self.age_private_key_path().exists() && self.sign_private_key_path().exists()

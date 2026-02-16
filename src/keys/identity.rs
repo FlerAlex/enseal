@@ -71,16 +71,10 @@ impl EnsealIdentity {
 
         // Age private key
         let age_sk_str = self.age_identity.to_string();
-        store.write_private(
-            &store.age_private_key_path(),
-            age_sk_str.expose_secret(),
-        )?;
+        store.write_private(&store.age_private_key_path(), age_sk_str.expose_secret())?;
 
         // Age public key
-        std::fs::write(
-            store.age_public_key_path(),
-            self.age_recipient.to_string(),
-        )?;
+        std::fs::write(store.age_public_key_path(), self.age_recipient.to_string())?;
 
         // Ed25519 signing key (raw 32 bytes)
         store.write_private(
@@ -101,6 +95,16 @@ impl EnsealIdentity {
     /// Compute the fingerprint of the public keys (SHA256 of age pubkey + sign pubkey).
     pub fn fingerprint(&self) -> String {
         fingerprint_from_keys(
+            &self.age_recipient.to_string(),
+            &base64::engine::general_purpose::STANDARD
+                .encode(self.signing_key.verifying_key().to_bytes()),
+        )
+    }
+
+    /// Compute a URL-safe channel ID for relay listen mode.
+    /// Hex-encoded SHA256 prefix of the public keys.
+    pub fn channel_id(&self) -> String {
+        channel_id_from_keys(
             &self.age_recipient.to_string(),
             &base64::engine::general_purpose::STANDARD
                 .encode(self.signing_key.verifying_key().to_bytes()),
@@ -134,10 +138,8 @@ impl TrustedKey {
             }
         }
 
-        let age_str =
-            age_pubkey.context("missing 'age:' line in public key file")?;
-        let sign_str =
-            sign_pubkey.context("missing 'sign: ed25519:' line in public key file")?;
+        let age_str = age_pubkey.context("missing 'age:' line in public key file")?;
+        let sign_str = sign_pubkey.context("missing 'sign: ed25519:' line in public key file")?;
 
         let age_recipient: age::x25519::Recipient = age_str
             .parse()
@@ -176,8 +178,16 @@ impl TrustedKey {
     pub fn fingerprint(&self) -> String {
         fingerprint_from_keys(
             &self.age_recipient.to_string(),
-            &base64::engine::general_purpose::STANDARD
-                .encode(self.verifying_key.to_bytes()),
+            &base64::engine::general_purpose::STANDARD.encode(self.verifying_key.to_bytes()),
+        )
+    }
+
+    /// Compute a URL-safe channel ID for relay listen mode.
+    /// Hex-encoded SHA256 prefix of the public keys.
+    pub fn channel_id(&self) -> String {
+        channel_id_from_keys(
+            &self.age_recipient.to_string(),
+            &base64::engine::general_purpose::STANDARD.encode(self.verifying_key.to_bytes()),
         )
     }
 }
@@ -191,13 +201,26 @@ pub fn format_pubkey_file(identity: &str, age_pubkey: &str, sign_pubkey_b64: &st
     )
 }
 
+/// Compute a URL-safe channel ID from public key strings.
+/// Returns hex-encoded SHA256 prefix (first 16 bytes = 32 hex chars).
+fn channel_id_from_keys(age_pubkey: &str, sign_pubkey_b64: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(age_pubkey.as_bytes());
+    hasher.update(sign_pubkey_b64.as_bytes());
+    let hash = hasher.finalize();
+    hex::encode(&hash[..16])
+}
+
 /// Compute SHA256 fingerprint from age + sign public key strings.
 fn fingerprint_from_keys(age_pubkey: &str, sign_pubkey_b64: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(age_pubkey.as_bytes());
     hasher.update(sign_pubkey_b64.as_bytes());
     let hash = hasher.finalize();
-    format!("SHA256:{}", base64::engine::general_purpose::STANDARD.encode(&hash[..16]))
+    format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD.encode(&hash[..16])
+    )
 }
 
 #[cfg(test)]
@@ -239,6 +262,23 @@ mod tests {
         let content = format_pubkey_file("test@example.com", &age_pub, &sign_pub);
         let parsed = TrustedKey::parse("test@example.com", &content).unwrap();
         assert_eq!(id.fingerprint(), parsed.fingerprint());
+    }
+
+    #[test]
+    fn channel_ids_match() {
+        let id = EnsealIdentity::generate();
+        let age_pub = id.age_recipient.to_string();
+        let sign_pub = base64::engine::general_purpose::STANDARD
+            .encode(id.signing_key.verifying_key().to_bytes());
+        let content = format_pubkey_file("test@example.com", &age_pub, &sign_pub);
+        let parsed = TrustedKey::parse("test@example.com", &content).unwrap();
+
+        let own_channel = id.channel_id();
+        let trusted_channel = parsed.channel_id();
+        assert_eq!(own_channel, trusted_channel);
+        // Channel ID should be 32 hex chars (16 bytes)
+        assert_eq!(own_channel.len(), 32);
+        assert!(own_channel.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

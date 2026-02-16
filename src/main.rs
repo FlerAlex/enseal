@@ -43,5 +43,10 @@ async fn main() -> Result<()> {
         cli::Command::Keys(args) => cli::keys::run(args),
         #[cfg(feature = "server")]
         cli::Command::Serve(args) => cli::serve::run(args).await,
+        cli::Command::Completions { shell } => {
+            let mut cmd = <cli::Cli as clap::CommandFactory>::command();
+            clap_complete::generate(shell, &mut cmd, "enseal", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }

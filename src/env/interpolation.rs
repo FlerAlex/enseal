@@ -57,10 +57,7 @@ fn resolve_value(
             }
 
             if !found_close {
-                bail!(
-                    "unterminated ${{}} reference in value of '{}'",
-                    current_key
-                );
+                bail!("unterminated ${{}} reference in value of '{}'", current_key);
             }
 
             // Parse VAR or VAR:-default
@@ -79,10 +76,7 @@ fn resolve_value(
 
             // Self-reference check
             if var_name == current_key {
-                bail!(
-                    "circular reference: '{}' references itself",
-                    current_key
-                );
+                bail!("circular reference: '{}' references itself", current_key);
             }
 
             // Forward reference check

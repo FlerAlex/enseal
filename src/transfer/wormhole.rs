@@ -42,9 +42,7 @@ pub async fn send(
 pub async fn receive(code: &str, relay_url: Option<&str>) -> Result<Envelope> {
     let config = super::app_config(relay_url);
 
-    let code = code
-        .parse()
-        .context("invalid wormhole code format")?;
+    let code = code.parse().context("invalid wormhole code format")?;
 
     tracing::debug!("connecting to rendezvous server...");
     let mailbox = MailboxConnection::connect(config, code, true)

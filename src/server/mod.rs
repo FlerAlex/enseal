@@ -11,6 +11,8 @@ pub struct ServerConfig {
     pub bind: String,
     pub max_channels: usize,
     pub channel_ttl_secs: u64,
+    pub max_payload_bytes: usize,
+    pub rate_limit_per_min: usize,
 }
 
 #[cfg(feature = "server")]
@@ -21,6 +23,8 @@ impl Default for ServerConfig {
             bind: "0.0.0.0".to_string(),
             max_channels: 100,
             channel_ttl_secs: 300,
+            max_payload_bytes: 1_048_576,
+            rate_limit_per_min: 10,
         }
     }
 }
@@ -32,6 +36,8 @@ pub fn build_router(config: ServerConfig) -> Router {
     let state = Arc::new(mailbox::RelayState::new(
         config.max_channels,
         config.channel_ttl_secs,
+        config.max_payload_bytes,
+        config.rate_limit_per_min,
     ));
 
     Router::new()

@@ -16,7 +16,10 @@ pub mod validate;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "enseal", about = "Secure, ephemeral secret sharing for developers")]
+#[command(
+    name = "enseal",
+    about = "Secure, ephemeral secret sharing for developers"
+)]
 #[command(version, propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -73,4 +76,11 @@ pub enum Command {
     /// Run the enseal relay server
     #[cfg(feature = "server")]
     Serve(serve::ServeArgs),
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-relay
+  labels:
+    app: enseal-relay
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: enseal-relay
+  template:
+    metadata:
+      labels:
+        app: enseal-relay
+    spec:
+      containers:
+        - name: relay
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --port
+            - "{{ .Values.relay.port }}"
+            - --max-mailboxes
+            - "{{ .Values.relay.maxMailboxes }}"
+            - --channel-ttl
+            - "{{ .Values.relay.channelTtl }}"
+          ports:
+            - name: relay
+              containerPort: {{ .Values.relay.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: relay
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: relay
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

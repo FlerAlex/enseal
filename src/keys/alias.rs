@@ -75,7 +75,10 @@ mod tests {
 
         let all = list(&store).unwrap();
         assert_eq!(all.len(), 1);
-        assert_eq!(all[0], ("alice".to_string(), "alice@example.com".to_string()));
+        assert_eq!(
+            all[0],
+            ("alice".to_string(), "alice@example.com".to_string())
+        );
 
         assert!(remove(&store, "alice").unwrap());
         assert_eq!(resolve(&store, "alice").unwrap(), None);
