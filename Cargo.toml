@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/FlerAlex/enseal"
 keywords = ["env", "secrets", "security", "dotenv", "wormhole"]
 categories = ["command-line-utilities", "cryptography"]
+exclude = [".github/", ".dockerignore", "Dockerfile", "deploy/"]
 
 [features]
 default = ["client", "server"]
