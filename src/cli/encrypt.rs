@@ -1,0 +1,128 @@
+use anyhow::{bail, Result};
+use clap::Args;
+
+use crate::crypto::at_rest;
+use crate::env;
+use crate::keys::identity::EnsealIdentity;
+use crate::keys::store::KeyStore;
+use crate::ui::display;
+
+#[derive(Args)]
+pub struct EncryptArgs {
+    /// Path to .env file to encrypt
+    #[arg(default_value = ".env")]
+    pub file: String,
+
+    /// Output path (default: <file>.encrypted for whole-file, in-place for per-var)
+    #[arg(long, short)]
+    pub output: Option<String>,
+
+    /// Per-variable encryption (keys visible, values encrypted)
+    #[arg(long)]
+    pub per_var: bool,
+
+    /// Encrypt to specific recipient(s) (can be repeated)
+    #[arg(long)]
+    pub to: Vec<String>,
+}
+
+pub fn run(args: EncryptArgs) -> Result<()> {
+    let content = std::fs::read_to_string(&args.file)
+        .map_err(|e| anyhow::anyhow!("failed to read '{}': {}", args.file, e))?;
+
+    // Collect recipients: either from --to flags or use own key
+    let recipients = resolve_recipients(&args.to)?;
+    let recipient_refs: Vec<&age::x25519::Recipient> = recipients.iter().collect();
+
+    if args.per_var {
+        encrypt_per_var(&args, &content, &recipient_refs)
+    } else {
+        encrypt_whole_file(&args, &content, &recipient_refs)
+    }
+}
+
+fn encrypt_whole_file(
+    args: &EncryptArgs,
+    content: &str,
+    recipients: &[&age::x25519::Recipient],
+) -> Result<()> {
+    let ciphertext = at_rest::encrypt_whole_file(content.as_bytes(), recipients)?;
+
+    let output_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| format!("{}.encrypted", args.file));
+
+    std::fs::write(&output_path, &ciphertext)
+        .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
+
+    let env_file = env::parser::parse(content).ok();
+    let var_count = env_file.map(|e| e.var_count()).unwrap_or(0);
+
+    if var_count > 0 {
+        display::ok(&format!(
+            "{} encrypted ({} variables, age key)",
+            output_path, var_count
+        ));
+    } else {
+        display::ok(&format!("{} encrypted (age key)", output_path));
+    }
+
+    Ok(())
+}
+
+fn encrypt_per_var(
+    args: &EncryptArgs,
+    content: &str,
+    recipients: &[&age::x25519::Recipient],
+) -> Result<()> {
+    let env_file = env::parser::parse(content)?;
+
+    // Check if already encrypted
+    if at_rest::is_per_var_encrypted(content) {
+        bail!("file already contains per-variable encrypted values");
+    }
+
+    let encrypted = at_rest::encrypt_per_var(&env_file, recipients)?;
+    let output_str = encrypted.to_string();
+
+    let output_path = args.output.clone().unwrap_or_else(|| args.file.clone());
+
+    std::fs::write(&output_path, &output_str)
+        .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
+
+    display::ok(&format!(
+        "{} encrypted ({} variables, per-variable, age key)",
+        output_path,
+        env_file.var_count()
+    ));
+
+    Ok(())
+}
+
+/// Resolve recipients from --to flags or use own key.
+fn resolve_recipients(to: &[String]) -> Result<Vec<age::x25519::Recipient>> {
+    if to.is_empty() {
+        // Use own key
+        let store = KeyStore::open()?;
+        let identity = EnsealIdentity::load(&store)?;
+        return Ok(vec![identity.age_recipient]);
+    }
+
+    let store = KeyStore::open()?;
+    let mut recipients = Vec::new();
+
+    for name in to {
+        let resolved = crate::keys::resolve_recipient(name)?;
+        let trusted = crate::keys::identity::TrustedKey::load(&store, &resolved)?;
+        recipients.push(trusted.age_recipient);
+    }
+
+    // Also include own key so the sender can decrypt too
+    if store.is_initialized() {
+        let identity = EnsealIdentity::load(&store)?;
+        recipients.push(identity.age_recipient);
+    }
+
+    Ok(recipients)
+}

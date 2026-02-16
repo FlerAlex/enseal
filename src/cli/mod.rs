@@ -1,5 +1,7 @@
 pub mod check;
+pub mod decrypt;
 pub mod diff;
+pub mod encrypt;
 pub mod inject;
 pub mod input;
 pub mod keys;
@@ -58,6 +60,12 @@ pub enum Command {
 
     /// Generate .env.example from a real .env with type hints
     Template(template::TemplateArgs),
+
+    /// Encrypt a .env file for safe storage (age-based)
+    Encrypt(encrypt::EncryptArgs),
+
+    /// Decrypt an at-rest encrypted .env file
+    Decrypt(decrypt::DecryptArgs),
 
     /// Manage identity keys, aliases, and trusted keys
     Keys(keys::KeysArgs),
