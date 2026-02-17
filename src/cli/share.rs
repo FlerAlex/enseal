@@ -136,20 +136,20 @@ pub async fn run(args: ShareArgs) -> Result<()> {
 }
 
 async fn send_anonymous_mode(args: &ShareArgs, envelope: &Envelope) -> Result<()> {
+    let (code, mailbox) =
+        transfer::wormhole::create_mailbox(args.relay.as_deref(), args.words).await?;
+
     if !args.quiet {
+        display::info("Share code:", &code);
         display::info(
             "Expires:",
             &format!("{} seconds or first receive", args.timeout),
         );
-    }
-
-    let code = transfer::wormhole::send(envelope, args.relay.as_deref(), args.words).await?;
-
-    if !args.quiet {
-        display::info("Share code:", &code);
     } else {
         println!("{}", code);
     }
+
+    transfer::wormhole::send(envelope, mailbox).await?;
 
     display::ok("sent");
     Ok(())

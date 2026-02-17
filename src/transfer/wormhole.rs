@@ -3,12 +3,12 @@ use magic_wormhole::{MailboxConnection, Wormhole};
 
 use crate::crypto::envelope::Envelope;
 
-/// Send an envelope via magic-wormhole. Returns the share code.
-pub async fn send(
-    envelope: &Envelope,
+/// Create a wormhole mailbox and return the share code and mailbox.
+/// The code is available immediately, before the receiver connects.
+pub async fn create_mailbox(
     relay_url: Option<&str>,
     code_words: usize,
-) -> Result<String> {
+) -> Result<(String, MailboxConnection<serde_json::Value>)> {
     let config = super::app_config(relay_url);
 
     tracing::debug!("connecting to rendezvous server...");
@@ -17,7 +17,11 @@ pub async fn send(
         .context("failed to connect to rendezvous server")?;
 
     let code = mailbox.code().to_string();
+    Ok((code, mailbox))
+}
 
+/// Send an envelope through an already-created mailbox.
+pub async fn send(envelope: &Envelope, mailbox: MailboxConnection<serde_json::Value>) -> Result<()> {
     let mut wormhole = Wormhole::connect(mailbox)
         .await
         .context("failed to establish wormhole connection")?;
@@ -35,7 +39,7 @@ pub async fn send(
         .await
         .context("failed to close wormhole cleanly")?;
 
-    Ok(code)
+    Ok(())
 }
 
 /// Receive an envelope via magic-wormhole using the given code.

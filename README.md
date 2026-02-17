@@ -44,46 +44,67 @@ Download from [GitHub Releases](https://github.com/FlerAlex/enseal/releases) for
 
 ## Quick Start
 
-### Share a `.env` file
+### Anonymous mode (zero setup)
+
+Share secrets using a one-time code. No keys, no accounts — works immediately.
 
 ```bash
+# terminal 1 (sender)
 enseal share .env
-```
+  Share code:  7-guitarist-revenge
+  Secrets:     14 variables
+  Expires:     5 minutes or first receive
 
-Give the code to your teammate over any channel — Slack, phone, carrier pigeon. The code is useless without the encrypted channel, and it expires after one use or 5 minutes.
-
-### Receive secrets
-
-```bash
+# terminal 2 (recipient) — enter the code
 enseal receive 7-guitarist-revenge
+ok: 14 secrets written to .env
 ```
 
-Writes the `.env` file to disk. Done.
-
-### Share a single secret
+Works with single secrets too:
 
 ```bash
-# pipe from anywhere
-echo "sk_live_abc123" | enseal share --label "Stripe key"
+# terminal 1 — pipe a token
+echo "my-api-token" | enseal share --label "API key"
+  Share code:  4-orbital-hammock
 
-# recipient gets raw string on stdout
+# terminal 2 — prints to stdout
 enseal receive 4-orbital-hammock
-sk_live_abc123
+my-api-token
+```
 
-# pipe to clipboard
-enseal receive 4-orbital-hammock | pbcopy
+Both terminals must be open at the same time — the sender waits until the recipient connects.
+
+### Identity mode (key-based, no codes)
+
+For teams with established key trust. Encrypt to a name, no coordination needed.
+
+```bash
+# one-time setup
+enseal keys init
+enseal keys export > my-key.pub          # share this with teammates
+enseal keys import teammate-key.pub      # import theirs
+
+# sender encrypts to recipient by name
+enseal share .env --to sarah
+
+# or push through the public relay (no codes at all)
+enseal share .env --to sarah --relay wss://relay.enseal.dev
+
+# or produce an encrypted file (no network)
+enseal share .env --to sarah --output ./drop/
 ```
 
 ### Inject secrets into a process (never touch disk)
 
 ```bash
-# via wormhole code
+# anonymous mode: sender gives you a code
 enseal inject 7-guitarist-revenge -- npm start
-ok: 14 secrets injected into process environment
 
-# via identity listen mode (zero codes, zero coordination)
-enseal inject --listen --relay wss://relay.enseal.dev -- npm start
-ok: waiting for incoming transfer...
+# identity mode: listen on relay, sender pushes when ready
+enseal inject --listen --relay wss://relay.enseal.dev -- docker compose up
+
+# from an encrypted file drop
+enseal inject ./staging.env.age -- python manage.py runserver
 ```
 
 Secrets exist only in the child process's memory. When it exits, they're gone.
