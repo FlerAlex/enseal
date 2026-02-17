@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,6 +21,9 @@ pub struct Metadata {
     pub label: Option<String>,
     pub sha256: String,
     pub project: Option<String>,
+    /// Unix epoch seconds when the envelope was created.
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 impl Envelope {
@@ -35,6 +40,11 @@ impl Envelope {
             PayloadFormat::Raw => None,
         };
 
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         Ok(Self {
             version: 1,
             format,
@@ -43,9 +53,33 @@ impl Envelope {
                 label,
                 sha256,
                 project: None,
+                created_at,
             },
             payload: content.to_string(),
         })
+    }
+
+    /// Check that the envelope is not older than `max_age_secs`.
+    /// Returns an error if the envelope is too old (replay protection).
+    pub fn check_age(&self, max_age_secs: u64) -> Result<()> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let age = now.saturating_sub(self.metadata.created_at);
+        if self.metadata.created_at == 0 {
+            // Legacy envelope without timestamp — allow but warn
+            tracing::warn!("envelope has no timestamp, skipping age check");
+            return Ok(());
+        }
+        if age > max_age_secs {
+            bail!(
+                "envelope expired: created {} seconds ago (max {})",
+                age,
+                max_age_secs
+            );
+        }
+        Ok(())
     }
 
     /// Serialize the envelope to JSON bytes for transfer.

@@ -98,6 +98,16 @@ async fn handle_socket(
         channels.retain(|_, ch| ch.created_at.elapsed() < ttl);
     }
 
+    // Prune stale IPs from rate limit log to prevent unbounded memory growth
+    {
+        let mut log = state.connection_log.lock().await;
+        let cutoff = Instant::now() - std::time::Duration::from_secs(60);
+        log.retain(|_, entries| {
+            entries.retain(|t| *t > cutoff);
+            !entries.is_empty()
+        });
+    }
+
     // Try to join an existing channel or create a new one
     let mut channels = state.channels.lock().await;
 

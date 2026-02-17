@@ -138,6 +138,7 @@ async fn listen_mode(args: &InjectArgs) -> Result<Envelope> {
     let sender_pubkey = signed.sender_age_pubkey.clone();
     let inner_bytes = signed.open(&own_identity, None)?;
     let envelope = Envelope::from_bytes(&inner_bytes)?;
+    envelope.check_age(300)?;
 
     if !args.quiet {
         display::info("From:", &sender_pubkey);

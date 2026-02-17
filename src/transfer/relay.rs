@@ -103,12 +103,12 @@ fn normalize_ws_url(url: &str) -> String {
     if let Some(rest) = url.strip_prefix("https://") {
         format!("wss://{rest}")
     } else if let Some(rest) = url.strip_prefix("http://") {
-        format!("ws://{rest}")
+        tracing::warn!("upgrading insecure http:// relay URL to wss://");
+        format!("wss://{rest}")
     } else if url.starts_with("ws://") || url.starts_with("wss://") {
         url.to_string()
     } else {
-        // Assume ws:// if no scheme
-        format!("ws://{}", url)
+        format!("wss://{}", url)
     }
 }
 
@@ -120,7 +120,7 @@ mod tests {
     fn normalize_urls() {
         assert_eq!(
             normalize_ws_url("http://localhost:4443"),
-            "ws://localhost:4443"
+            "wss://localhost:4443"
         );
         assert_eq!(
             normalize_ws_url("https://relay.example.com"),
@@ -133,7 +133,7 @@ mod tests {
         );
         assert_eq!(
             normalize_ws_url("relay.example.com:4443"),
-            "ws://relay.example.com:4443"
+            "wss://relay.example.com:4443"
         );
     }
 

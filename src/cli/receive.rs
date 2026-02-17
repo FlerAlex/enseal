@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args;
 
 use crate::cli::input::PayloadFormat;
@@ -28,6 +28,10 @@ pub struct ReceiveArgs {
     /// Use specific relay server
     #[arg(long, env = "ENSEAL_RELAY")]
     pub relay: Option<String>,
+
+    /// Overwrite existing files without prompting
+    #[arg(long)]
+    pub force: bool,
 
     /// Minimal output
     #[arg(long, short)]
@@ -66,6 +70,7 @@ async fn receive_wormhole(args: &ReceiveArgs) -> Result<Envelope> {
         .await
         {
             Ok((envelope, sender_pubkey)) => {
+                envelope.check_age(300)?;
                 if !args.quiet {
                     display::info("From:", &sender_pubkey);
                     display::ok("signature verified");
@@ -81,6 +86,7 @@ async fn receive_wormhole(args: &ReceiveArgs) -> Result<Envelope> {
 
     // Anonymous mode
     let envelope = transfer::wormhole::receive(&args.code, args.relay.as_deref()).await?;
+    envelope.check_age(300)?;
     Ok(envelope)
 }
 
@@ -136,6 +142,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
                 print!("{}", payload);
             } else {
                 let path = args.output.as_deref().unwrap_or(".env");
+                check_overwrite(path, args.force)?;
                 std::fs::write(path, payload)?;
                 let count = envelope.metadata.var_count.unwrap_or(0);
                 display::ok(&format!("{} secrets written to {}", count, path));
@@ -143,6 +150,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         }
         PayloadFormat::Raw => {
             if let Some(ref path) = args.output {
+                check_overwrite(path, args.force)?;
                 std::fs::write(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
@@ -151,6 +159,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         }
         PayloadFormat::Kv => {
             if let Some(ref path) = args.output {
+                check_overwrite(path, args.force)?;
                 std::fs::write(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
@@ -159,6 +168,30 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Check if the target file exists and handle overwrite confirmation.
+fn check_overwrite(path: &str, force: bool) -> Result<()> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(());
+    }
+    if force {
+        return Ok(());
+    }
+    if !is_terminal::is_terminal(std::io::stdin()) {
+        bail!(
+            "'{}' already exists. Use --force to overwrite in non-interactive mode",
+            path
+        );
+    }
+    let confirm = dialoguer::Confirm::new()
+        .with_prompt(format!("'{}' already exists. Overwrite?", path))
+        .default(false)
+        .interact()?;
+    if !confirm {
+        bail!("aborted: not overwriting '{}'", path);
+    }
     Ok(())
 }
 

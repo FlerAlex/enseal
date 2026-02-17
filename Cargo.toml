@@ -1,6 +1,6 @@
 [package]
 name = "enseal"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 description = "Secure, ephemeral secret sharing for developers"
 license = "MIT"
