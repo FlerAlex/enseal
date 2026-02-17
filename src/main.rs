@@ -13,6 +13,10 @@ mod ui;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     let args = cli::Cli::parse();
 
     let log_level = if args.verbose {

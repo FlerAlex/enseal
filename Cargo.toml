@@ -1,6 +1,6 @@
 [package]
 name = "enseal"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Secure, ephemeral secret sharing for developers"
 license = "MIT"
@@ -61,7 +61,8 @@ hex = "0.4"
 magic-wormhole = "0.7"
 
 # Transfer (v0.3: self-hosted relay)
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", features = ["ring"] }
 futures-util = "0.3"
 
 # Server (v0.3: self-hosted relay, optional)
