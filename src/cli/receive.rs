@@ -179,7 +179,7 @@ fn check_overwrite(path: &str, force: bool) -> Result<()> {
     if force {
         return Ok(());
     }
-    if !is_terminal::is_terminal(std::io::stdin()) {
+    if !is_terminal::is_terminal(std::io::stderr()) {
         bail!(
             "'{}' already exists. Use --force to overwrite in non-interactive mode",
             path

@@ -98,6 +98,7 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
                 .await
             {
                 Ok((envelope, sender_pubkey)) => {
+                    envelope.check_age(300)?;
                     if !args.quiet {
                         display::info("From:", &sender_pubkey);
                         display::ok("signature verified");
@@ -111,6 +112,7 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
         }
 
         let envelope = transfer::wormhole::receive(code, args.relay.as_deref()).await?;
+        envelope.check_age(300)?;
         Ok(envelope)
     }
 }
