@@ -32,7 +32,7 @@ cargo install enseal
 ### From source
 
 ```bash
-git clone https://github.com/YOURUSERNAME/enseal.git
+git clone https://github.com/FlerAlex/enseal.git
 cd enseal
 cargo build --release
 # binary at ./target/release/enseal
@@ -82,7 +82,7 @@ enseal inject 7-guitarist-revenge -- npm start
 ok: 14 secrets injected into process environment
 
 # via identity listen mode (zero codes, zero coordination)
-enseal inject --listen --relay wss://relay.internal:4443 -- npm start
+enseal inject --listen --relay wss://relay.enseal.dev -- npm start
 ok: waiting for incoming transfer...
 ```
 
@@ -113,7 +113,7 @@ Identity mode supports three transport options:
 enseal share .env --to sarah
 
 # relay push (with --relay): zero codes, pushes directly to recipient's channel
-enseal share .env --to sarah --relay wss://relay.internal:4443
+enseal share .env --to sarah --relay wss://relay.enseal.dev
 
 # file drop (with --output): no network, produces encrypted file
 enseal share .env --to sarah --output ./drop/
@@ -209,13 +209,13 @@ Receive secrets and inject them directly as environment variables into a child p
 enseal inject 7-guitarist-revenge -- npm start
 
 # identity mode: listen for incoming transfer on relay
-enseal inject --listen --relay wss://relay.internal:4443 -- docker compose up
+enseal inject --listen --relay wss://relay.enseal.dev -- docker compose up
 
 # from encrypted file drop
 enseal inject ./staging.env.age -- python manage.py runserver
 ```
 
-With `--listen`, the receiver connects to the relay and waits. The sender pushes with `enseal share .env --to alex --relay wss://relay.internal:4443` — no codes exchanged, zero coordination needed.
+With `--listen`, the receiver connects to the relay and waits. The sender pushes with `enseal share .env --to alex --relay wss://relay.enseal.dev` — no codes exchanged, zero coordination needed.
 
 ### .env Toolkit
 
@@ -306,6 +306,44 @@ enseal share .env --to backend-team
 enseal keys group delete backend-team
 ```
 
+### Public Relay
+
+A free public relay is available at `wss://relay.enseal.dev`. Use it for quick testing or when you don't need a private relay.
+
+```bash
+# check relay health
+curl https://relay.enseal.dev/health
+
+# use it for identity-mode transfers
+enseal share .env --to sarah --relay wss://relay.enseal.dev
+enseal inject --listen --relay wss://relay.enseal.dev -- npm start
+
+# or set it globally
+export ENSEAL_RELAY=wss://relay.enseal.dev
+```
+
+#### Try it yourself
+
+```bash
+# 1. generate keys (one-time)
+enseal keys init
+
+# 2. export and import your own key (for self-testing)
+enseal keys export > /tmp/mykey.pub
+enseal keys import /tmp/mykey.pub
+#    enter an alias when prompted (e.g. "mykey")
+
+# 3. test file drop (no network needed)
+enseal share --secret "TEST=works" --to mykey --output /tmp/
+enseal receive /tmp/mykey.env.age
+
+# 4. test relay push (two terminals)
+#    terminal 1 (receiver):
+enseal inject --listen --relay wss://relay.enseal.dev -- env | grep TEST
+#    terminal 2 (sender):
+enseal share --secret "TEST=relay_works" --to mykey --relay wss://relay.enseal.dev
+```
+
 ### Self-Hosted Relay
 
 Keep everything inside your network. The relay is stateless — it sees only ciphertext.
@@ -315,10 +353,10 @@ Keep everything inside your network. The relay is stateless — it sees only cip
 docker run -d -p 4443:4443 enseal/relay
 
 # Or as a binary
-enseal serve --port 4443 --tls-cert cert.pem --tls-key key.pem
+enseal serve --port 4443
 
 # Check relay health
-enseal serve --health
+curl http://localhost:4443/health
 
 # Clients point to your relay
 enseal share .env --relay wss://relay.internal:4443
@@ -426,7 +464,7 @@ Optional `.enseal.toml` in your project root:
 
 ```toml
 [defaults]
-relay = "wss://relay.internal.company.com:4443"
+relay = "wss://relay.enseal.dev"     # or your self-hosted relay
 timeout = 600
 
 [filter]
@@ -522,6 +560,8 @@ enseal keys group delete <name>          Delete a group
 --bind <addr>            Bind address (default: 0.0.0.0)
 --max-mailboxes <n>      Max concurrent channels (default: 100)
 --channel-ttl <seconds>  Idle channel lifetime (default: 300)
+--max-payload <bytes>    Max WebSocket message size (default: 1048576)
+--rate-limit <n>         Max connections per minute per IP (default: 10)
 --health                 Print server health check and exit
 ```
 

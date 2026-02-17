@@ -61,7 +61,7 @@ hex = "0.4"
 magic-wormhole = "0.7"
 
 # Transfer (v0.3: self-hosted relay)
-tokio-tungstenite = "0.24"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 
 # Server (v0.3: self-hosted relay, optional)
