@@ -21,7 +21,10 @@ pub async fn create_mailbox(
 }
 
 /// Send an envelope through an already-created mailbox.
-pub async fn send(envelope: &Envelope, mailbox: MailboxConnection<serde_json::Value>) -> Result<()> {
+pub async fn send(
+    envelope: &Envelope,
+    mailbox: MailboxConnection<serde_json::Value>,
+) -> Result<()> {
     let mut wormhole = Wormhole::connect(mailbox)
         .await
         .context("failed to establish wormhole connection")?;
