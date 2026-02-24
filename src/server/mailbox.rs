@@ -68,6 +68,11 @@ pub async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<RelayState>>,
 ) -> impl IntoResponse {
+    // Validate channel code: max 128 chars, alphanumeric and hyphens only
+    if code.len() > 128 || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return (axum::http::StatusCode::BAD_REQUEST, "invalid channel code").into_response();
+    }
+
     if !state.check_rate_limit(addr.ip()).await {
         tracing::warn!(ip = %addr.ip(), "rate limit exceeded");
         return (
@@ -119,25 +124,14 @@ async fn handle_socket(
 
         tracing::debug!(code = %code, "second client connected, starting relay");
 
-        // Create channel for second client -> first client
-        let (second_to_first_tx, second_to_first_rx) = mpsc::channel::<Message>(32);
-
-        // Spawn task to send second_to_first messages to first client
-        // (first client will read from first_client_rx which gets second client's messages)
-        // Actually, we need to rethink: first client is waiting, we need bidirectional relay.
-
-        // Channel pair:
-        // first_client_tx: sends TO first client (second client's messages go here)
-        // first_client_rx: receives FROM first client (first client's messages come here)
-
-        // We need to relay:
+        // Relay:
         // ws_rx (second client sends) -> first_client_tx (to first client)
         // first_client_rx (first client sends) -> ws_tx (to second client)
 
         let mut first_client_rx = first_client_rx;
 
         // Forward: first client -> second client
-        let forward_first = tokio::spawn(async move {
+        let mut forward_first = tokio::spawn(async move {
             while let Some(msg) = first_client_rx.recv().await {
                 if ws_tx.send(msg).await.is_err() {
                     break;
@@ -147,20 +141,23 @@ async fn handle_socket(
 
         // Forward: second client -> first client
         let max_payload_second = max_payload_bytes;
-        let forward_second = tokio::spawn(async move {
+        let mut forward_second = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_rx.next().await {
                 if matches!(msg, Message::Close(_)) {
                     break;
                 }
-                if let Message::Binary(ref data) = msg {
-                    if data.len() > max_payload_second {
-                        tracing::warn!(
-                            "payload size {} exceeds limit {}",
-                            data.len(),
-                            max_payload_second
-                        );
-                        break;
-                    }
+                let msg_size = match &msg {
+                    Message::Binary(data) => data.len(),
+                    Message::Text(text) => text.len(),
+                    _ => 0,
+                };
+                if msg_size > max_payload_second {
+                    tracing::warn!(
+                        "payload size {} exceeds limit {}",
+                        msg_size,
+                        max_payload_second
+                    );
+                    break;
                 }
                 if first_client_tx.send(msg).await.is_err() {
                     break;
@@ -170,14 +167,15 @@ async fn handle_socket(
             let _ = first_client_tx.send(Message::Close(None)).await;
         });
 
-        // Wait for either to finish
+        // Wait for either to finish, then abort the other
         tokio::select! {
-            _ = forward_first => {}
-            _ = forward_second => {}
+            _ = &mut forward_first => {
+                forward_second.abort();
+            }
+            _ = &mut forward_second => {
+                forward_first.abort();
+            }
         }
-
-        drop(second_to_first_tx);
-        drop(second_to_first_rx);
 
         tracing::debug!(code = %code, "relay session ended");
     } else {
@@ -210,20 +208,23 @@ async fn handle_socket(
         // Forward: first client sends -> from_first_tx (stored for second client)
         let code_clone = code.clone();
         let max_payload_first = max_payload_bytes;
-        let forward_outgoing = tokio::spawn(async move {
+        let mut forward_outgoing = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_rx.next().await {
                 if matches!(msg, Message::Close(_)) {
                     break;
                 }
-                if let Message::Binary(ref data) = msg {
-                    if data.len() > max_payload_first {
-                        tracing::warn!(
-                            "payload size {} exceeds limit {}",
-                            data.len(),
-                            max_payload_first
-                        );
-                        break;
-                    }
+                let msg_size = match &msg {
+                    Message::Binary(data) => data.len(),
+                    Message::Text(text) => text.len(),
+                    _ => 0,
+                };
+                if msg_size > max_payload_first {
+                    tracing::warn!(
+                        "payload size {} exceeds limit {}",
+                        msg_size,
+                        max_payload_first
+                    );
+                    break;
                 }
                 if from_first_tx.send(msg).await.is_err() {
                     break;
@@ -232,7 +233,7 @@ async fn handle_socket(
         });
 
         // Forward: to_first_rx (from second client) -> first client ws
-        let forward_incoming = tokio::spawn(async move {
+        let mut forward_incoming = tokio::spawn(async move {
             while let Some(msg) = to_first_rx.recv().await {
                 if ws_tx.send(msg).await.is_err() {
                     break;
@@ -241,8 +242,12 @@ async fn handle_socket(
         });
 
         tokio::select! {
-            _ = forward_outgoing => {}
-            _ = forward_incoming => {}
+            _ = &mut forward_outgoing => {
+                forward_incoming.abort();
+            }
+            _ = &mut forward_incoming => {
+                forward_outgoing.abort();
+            }
         }
 
         // Clean up channel if still waiting (second client never connected)

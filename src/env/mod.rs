@@ -82,10 +82,20 @@ impl fmt::Display for EnvFile {
                         || value.contains('"')
                         || value.contains('\'')
                         || value.contains('#')
+                        || value.contains('$')
+                        || value.contains('\\')
+                        || value.contains('\n')
+                        || value.contains('\t')
+                        || value.contains('\r')
                         || value.is_empty()
                     {
-                        // Quote values that need it
-                        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+                        // Quote and escape values that need it
+                        let escaped = value
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\t', "\\t")
+                            .replace('\r', "\\r");
                         writeln!(f, "{key}=\"{escaped}\"")?;
                     } else {
                         writeln!(f, "{key}={value}")?;

@@ -35,8 +35,8 @@ pub struct ShareArgs {
     pub output: Option<String>,
 
     /// Number of words in wormhole code (2-5)
-    #[arg(long, default_value = "2")]
-    pub words: usize,
+    #[arg(long, default_value = "2", value_parser = clap::value_parser!(u16).range(2..=5))]
+    pub words: u16,
 
     /// Regex to exclude vars
     #[arg(long)]
@@ -62,16 +62,27 @@ pub struct ShareArgs {
     #[arg(long, env = "ENSEAL_RELAY")]
     pub relay: Option<String>,
 
-    /// Channel expiry in seconds
-    #[arg(long, default_value = "300")]
-    pub timeout: u64,
-
     /// Minimal output
     #[arg(long, short)]
     pub quiet: bool,
 }
 
 pub async fn run(args: ShareArgs) -> Result<()> {
+    // Reject conflicting --env and file argument
+    if args.env.is_some() && args.file.is_some() {
+        anyhow::bail!("--env and a file argument are mutually exclusive");
+    }
+
+    // --output requires --to (file drop is identity mode only)
+    if args.output.is_some() && args.to.is_none() {
+        anyhow::bail!("--output requires --to (file drop is only available in identity mode)");
+    }
+
+    // --no-filter skips all processing; reject contradictory filter flags
+    if args.no_filter && (args.include.is_some() || args.exclude.is_some()) {
+        anyhow::bail!("--no-filter cannot be used with --include or --exclude");
+    }
+
     // 1. Resolve file via profile if --env is set
     let file_arg = if let Some(ref profile) = args.env {
         let resolved = env::profile::resolve(profile, std::path::Path::new("."))?;
@@ -94,9 +105,11 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         let env_file = env::parser::parse(&payload.content)?;
 
         // Run validation warnings
-        let issues = env::validator::validate(&env_file);
-        for issue in &issues {
-            display::warning(&issue.message);
+        if !args.quiet {
+            let issues = env::validator::validate(&env_file);
+            for issue in &issues {
+                display::warning(&issue.message);
+            }
         }
 
         // Interpolate ${VAR} references (unless --no-interpolate)
@@ -108,6 +121,10 @@ pub async fn run(args: ShareArgs) -> Result<()> {
 
         // Apply filters
         let filtered = filter::filter(&env_file, args.include.as_deref(), args.exclude.as_deref())?;
+
+        if filtered.var_count() == 0 {
+            anyhow::bail!("all variables were filtered out (check --include/--exclude patterns)");
+        }
 
         filtered.to_string()
     } else {
@@ -137,21 +154,20 @@ pub async fn run(args: ShareArgs) -> Result<()> {
 
 async fn send_anonymous_mode(args: &ShareArgs, envelope: &Envelope) -> Result<()> {
     let (code, mailbox) =
-        transfer::wormhole::create_mailbox(args.relay.as_deref(), args.words).await?;
+        transfer::wormhole::create_mailbox(args.relay.as_deref(), args.words.into()).await?;
 
     if !args.quiet {
         display::info("Share code:", &code);
-        display::info(
-            "Expires:",
-            &format!("{} seconds or first receive", args.timeout),
-        );
+        display::info("Expires:", "on first receive (server-dependent TTL)");
     } else {
         println!("{}", code);
     }
 
     transfer::wormhole::send(envelope, mailbox).await?;
 
-    display::ok("sent");
+    if !args.quiet {
+        display::ok("sent");
+    }
     Ok(())
 }
 
@@ -201,34 +217,51 @@ async fn send_identity_mode(
             std::path::Path::new(output_dir),
             &filename,
         )?;
-        display::ok(&format!(
-            "encrypted to {}, written to {}",
-            display_name,
-            dest.display()
-        ));
+        if !args.quiet {
+            display::ok(&format!(
+                "encrypted to {}, written to {}",
+                display_name,
+                dest.display()
+            ));
+        }
     } else if let Some(ref relay_url) = args.relay {
         // Enseal relay push mode — no code needed
         let inner_bytes = envelope.to_bytes()?;
         let signed = SignedEnvelope::seal(&inner_bytes, &age_recipients, &sender)?;
         let wire_bytes = signed.to_bytes()?;
 
-        let channel_id = trusted_keys[0].channel_id();
+        // Push to all recipients' channels (important for groups)
+        for tk in &trusted_keys {
+            let channel_id = tk.channel_id();
+            transfer::relay::push(&wire_bytes, relay_url, &channel_id).await?;
+        }
 
-        transfer::relay::push(&wire_bytes, relay_url, &channel_id).await?;
-
-        display::ok(&format!("pushed to {}", display_name));
+        if !args.quiet {
+            display::ok(&format!("pushed to {}", display_name));
+        }
     } else {
-        // Wormhole mode (default)
-        let code =
-            transfer::identity::send(envelope, &age_recipients, &sender, None, args.words).await?;
+        // Wormhole mode (default) — display code before sending
+        let (code, wire_bytes, mailbox) = transfer::identity::create_mailbox(
+            envelope,
+            &age_recipients,
+            &sender,
+            None,
+            args.words.into(),
+        )
+        .await?;
 
         if !args.quiet {
             display::info("Share code:", &code);
+            display::info("Expires:", "on first receive (server-dependent TTL)");
         } else {
             println!("{}", code);
         }
 
-        display::ok(&format!("encrypted to {}, signed by you", display_name));
+        transfer::identity::send(wire_bytes, mailbox).await?;
+
+        if !args.quiet {
+            display::ok(&format!("encrypted to {}, signed by you", display_name));
+        }
     }
 
     Ok(())

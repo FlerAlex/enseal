@@ -58,6 +58,14 @@ pub fn run(args: TemplateArgs) -> Result<()> {
     }
 
     if let Some(ref path) = args.output {
+        if std::path::Path::new(path.as_str()).exists() {
+            anyhow::bail!(
+                "'{}' already exists. This command replaces values with type hints -- \
+                 overwriting a real .env would destroy secret values. \
+                 Delete the file first if this is intentional",
+                path
+            );
+        }
         std::fs::write(path, &output)?;
         display::ok(&format!(
             "template written to {} ({} variables)",
@@ -83,7 +91,7 @@ fn infer_type_hint(value: &str) -> String {
     if value.parse::<i64>().is_ok() {
         if let Ok(n) = value.parse::<u16>() {
             if (1024..=65535).contains(&n) {
-                return format!("integer, {}", value.len());
+                return "integer, port".to_string();
             }
         }
         return "integer".to_string();

@@ -46,5 +46,6 @@ pub fn run(args: DiffArgs) -> Result<()> {
         );
     }
 
-    Ok(())
+    // Exit with code 1 when differences exist (standard diff convention)
+    std::process::exit(1)
 }

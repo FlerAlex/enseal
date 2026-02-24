@@ -5,6 +5,10 @@
 [![Crates.io](https://img.shields.io/crates/v/enseal)](https://crates.io/crates/enseal)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **Beta:** enseal is under active development. APIs and CLI flags may change between releases.
+
+For detailed documentation, visit [enseal.docsyard.com](https://enseal.docsyard.com).
+
 Secure, ephemeral secret sharing for developers.
 
 Stop pasting secrets into Slack. `enseal` makes the secure path faster than the insecure one — share `.env` files and secrets through encrypted, single-use channels with one command and zero setup.
@@ -14,7 +18,7 @@ Stop pasting secrets into Slack. `enseal` makes the secure path faster than the 
 $ enseal share .env
   Share code:  7-guitarist-revenge
   Secrets:     14 variables (staging)
-  Expires:     5 minutes or first receive
+  Expires:     on first receive
 
 # recipient
 $ enseal receive 7-guitarist-revenge
@@ -53,7 +57,7 @@ Share secrets using a one-time code. No keys, no accounts — works immediately.
 enseal share .env
   Share code:  7-guitarist-revenge
   Secrets:     14 variables
-  Expires:     5 minutes or first receive
+  Expires:     on first receive
 
 # terminal 2 (recipient) — enter the code
 enseal receive 7-guitarist-revenge
@@ -486,7 +490,6 @@ Optional `.enseal.toml` in your project root:
 ```toml
 [defaults]
 relay = "wss://relay.enseal.dev"     # or your self-hosted relay
-timeout = 600
 
 [filter]
 exclude = ["^PUBLIC_", "^NEXT_PUBLIC_", "^REACT_APP_"]
@@ -535,7 +538,6 @@ ENCRYPTION
 --no-filter              Send raw file, skip .env parsing
 --no-interpolate         Don't resolve ${VAR} references before sending
 --words <n>              Number of words in wormhole code (default: 2)
---timeout <seconds>      Channel expiry (default: 300)
 --quiet / -q             Minimal output
 ```
 
@@ -598,7 +600,6 @@ enseal keys group delete <name>          Delete a group
 ```
 --verbose / -v           Debug output (never prints secret values)
 --quiet / -q             Minimal output (for scripting)
---config <path>          Path to .enseal.toml manifest
 ```
 
 ## Comparison
@@ -617,12 +618,14 @@ enseal keys group delete <name>          Delete a group
 
 ## Roadmap
 
-- **v0.1** — Core: share/receive, pipe/stdin, .env toolkit (check, diff, redact)
-- **v0.2** — Identity mode: keys, aliases, `--to` flag
-- **v0.3** — Inject command, self-hosted relay
-- **v0.4** — Schema validation, templates, interpolation, profiles
-- **v0.5** — At-rest encryption (encrypt/decrypt)
-- **v1.0** — Groups, Helm chart, shell completions, docs
+- **v0.1** — Core: share/receive, pipe/stdin, .env toolkit (check, diff, redact) *(done)*
+- **v0.2** — Identity mode: keys, aliases, `--to` flag *(done)*
+- **v0.3** — Inject command, self-hosted relay *(done)*
+- **v0.4** — Schema validation, templates, interpolation, profiles *(done)*
+- **v0.5** — At-rest encryption (encrypt/decrypt) *(done)*
+- **v0.10** — Groups, Helm chart, docs *(done)*
+- **v0.11** — Security hardening, docs sync *(current)*
+- **v1.0** — crates.io publish, shell completions, final polish
 
 ## License
 

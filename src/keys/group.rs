@@ -10,8 +10,26 @@ pub struct GroupEntry {
     pub members: Vec<String>,
 }
 
+/// Validate that a group name contains only safe characters.
+fn validate_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("group name cannot be empty");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        bail!(
+            "group name '{}' contains invalid characters (use A-Z, a-z, 0-9, _, -)",
+            name
+        );
+    }
+    Ok(())
+}
+
 /// Create a new group. Errors if it already exists.
 pub fn create(store: &KeyStore, name: &str) -> Result<()> {
+    validate_name(name)?;
     let mut groups = load_groups(store)?;
     if groups.contains_key(name) {
         bail!("group '{}' already exists", name);
@@ -27,6 +45,7 @@ pub fn create(store: &KeyStore, name: &str) -> Result<()> {
 
 /// Add a member to a group. Errors if the group doesn't exist. Skips if already a member.
 pub fn add_member(store: &KeyStore, group: &str, identity: &str) -> Result<bool> {
+    crate::keys::store::validate_identity_name(identity)?;
     let mut groups = load_groups(store)?;
     let entry = groups
         .get_mut(group)

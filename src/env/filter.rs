@@ -1,5 +1,5 @@
 use anyhow::Result;
-use regex::Regex;
+use regex::RegexBuilder;
 
 use super::{Entry, EnvFile};
 
@@ -8,8 +8,12 @@ use super::{Entry, EnvFile};
 /// - `exclude`: if Some, remove vars matching this pattern
 ///   Include is applied first, then exclude.
 pub fn filter(env: &EnvFile, include: Option<&str>, exclude: Option<&str>) -> Result<EnvFile> {
-    let include_re = include.map(Regex::new).transpose()?;
-    let exclude_re = exclude.map(Regex::new).transpose()?;
+    let include_re = include
+        .map(|p| RegexBuilder::new(p).size_limit(100 * 1024).build())
+        .transpose()?;
+    let exclude_re = exclude
+        .map(|p| RegexBuilder::new(p).size_limit(100 * 1024).build())
+        .transpose()?;
 
     let entries = env
         .entries

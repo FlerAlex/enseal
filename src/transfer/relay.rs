@@ -2,15 +2,47 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite;
 
+/// WebSocket client configuration with payload size limit.
+fn ws_config() -> tungstenite::protocol::WebSocketConfig {
+    tungstenite::protocol::WebSocketConfig {
+        max_message_size: Some(MAX_RELAY_PAYLOAD),
+        max_frame_size: Some(MAX_RELAY_PAYLOAD),
+        ..Default::default()
+    }
+}
+
+/// Maximum payload size accepted from relay (16 MiB).
+/// Protects against a malicious relay or sender exhausting memory.
+const MAX_RELAY_PAYLOAD: usize = 16 * 1024 * 1024;
+
+/// Maximum time to wait for relay operations (5 minutes).
+const RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Send bytes through an enseal relay server.
 /// Returns the channel code that the receiver needs.
 pub async fn send(data: &[u8], relay_url: &str, code: &str) -> Result<()> {
+    if !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!("invalid channel code: contains disallowed characters");
+    }
+
+    tokio::time::timeout(RELAY_TIMEOUT, send_inner(data, relay_url, code))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "relay send timed out after {} seconds",
+                RELAY_TIMEOUT.as_secs()
+            )
+        })?
+}
+
+async fn send_inner(data: &[u8], relay_url: &str, code: &str) -> Result<()> {
     let ws_url = format!("{}/channel/{}", normalize_ws_url(relay_url), code);
 
     tracing::debug!("connecting to enseal relay: {}", ws_url);
-    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .context("failed to connect to enseal relay")?;
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async_with_config(&ws_url, Some(ws_config()), false)
+            .await
+            .context("failed to connect to enseal relay")?;
 
     // Send the data as a binary message
     ws.send(tungstenite::Message::Binary(data.to_vec()))
@@ -37,21 +69,44 @@ pub async fn send(data: &[u8], relay_url: &str, code: &str) -> Result<()> {
 
 /// Receive bytes from an enseal relay server using the given code.
 pub async fn receive(relay_url: &str, code: &str) -> Result<Vec<u8>> {
+    if !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!("invalid channel code: contains disallowed characters");
+    }
+
+    tokio::time::timeout(RELAY_TIMEOUT, receive_inner(relay_url, code))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "relay receive timed out after {} seconds",
+                RELAY_TIMEOUT.as_secs()
+            )
+        })?
+}
+
+async fn receive_inner(relay_url: &str, code: &str) -> Result<Vec<u8>> {
     let ws_url = format!("{}/channel/{}", normalize_ws_url(relay_url), code);
 
     tracing::debug!("connecting to enseal relay: {}", ws_url);
-    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .context("failed to connect to enseal relay")?;
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async_with_config(&ws_url, Some(ws_config()), false)
+            .await
+            .context("failed to connect to enseal relay")?;
 
     // Wait for a binary message from the sender
     while let Some(msg) = ws.next().await {
         match msg {
             Ok(tungstenite::Message::Binary(data)) => {
+                if data.len() > MAX_RELAY_PAYLOAD {
+                    anyhow::bail!(
+                        "relay payload too large ({} bytes, max {})",
+                        data.len(),
+                        MAX_RELAY_PAYLOAD
+                    );
+                }
                 // Send ack
                 let _ = ws.send(tungstenite::Message::Binary(b"ack".to_vec())).await;
                 let _ = ws.close(None).await;
-                return Ok(data.to_vec());
+                return Ok(data);
             }
             Ok(tungstenite::Message::Close(_)) => {
                 anyhow::bail!("relay closed connection before data was received");
@@ -82,7 +137,7 @@ pub async fn listen(relay_url: &str, channel_id: &str) -> Result<Vec<u8>> {
 pub fn generate_code() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let num: u32 = rng.gen_range(1000..9999);
+    let num: u32 = rng.gen_range(1000..10000);
     // Use a simple word list for human-friendly codes
     let words = [
         "alpha", "bravo", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo",
@@ -103,8 +158,8 @@ fn normalize_ws_url(url: &str) -> String {
     if let Some(rest) = url.strip_prefix("https://") {
         format!("wss://{rest}")
     } else if let Some(rest) = url.strip_prefix("http://") {
-        tracing::warn!("upgrading insecure http:// relay URL to wss://");
-        format!("wss://{rest}")
+        crate::ui::display::warning("using insecure ws:// relay connection (from http:// URL)");
+        format!("ws://{rest}")
     } else if url.starts_with("ws://") || url.starts_with("wss://") {
         url.to_string()
     } else {
@@ -120,7 +175,7 @@ mod tests {
     fn normalize_urls() {
         assert_eq!(
             normalize_ws_url("http://localhost:4443"),
-            "wss://localhost:4443"
+            "ws://localhost:4443"
         );
         assert_eq!(
             normalize_ws_url("https://relay.example.com"),

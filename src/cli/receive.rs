@@ -1,8 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args;
 
 use crate::cli::input::PayloadFormat;
 use crate::crypto::envelope::Envelope;
+use crate::crypto::signing::SignedEnvelope;
 use crate::env;
 use crate::keys;
 use crate::transfer;
@@ -52,40 +53,45 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
 }
 
 async fn receive_wormhole(args: &ReceiveArgs) -> Result<Envelope> {
-    // Try identity mode first: if we have keys initialized, use identity receive
-    // But wormhole codes work the same for both — the envelope content tells us
-    // whether it's signed or not.
-    // For now, try to receive as signed first, fall back to anonymous.
+    // Receive raw bytes once, then determine if it's identity or anonymous mode
+    // by trying to parse as SignedEnvelope first.
+    let data = transfer::wormhole::receive_raw(&args.code, args.relay.as_deref()).await?;
+
     let store = keys::store::KeyStore::open()?;
 
+    // Try identity mode: parse as SignedEnvelope, verify, and decrypt
     if store.is_initialized() {
-        // Try receiving as identity-mode (signed envelope)
-        let own_identity = keys::identity::EnsealIdentity::load(&store)?;
-        match transfer::identity::receive(
-            &args.code,
-            &own_identity,
-            None, // Don't require specific sender
-            args.relay.as_deref(),
-        )
-        .await
-        {
-            Ok((envelope, sender_pubkey)) => {
-                envelope.check_age(300)?;
-                if !args.quiet {
-                    display::info("From:", &sender_pubkey);
-                    display::ok("signature verified");
+        if let Ok(signed) = SignedEnvelope::from_bytes(&data) {
+            let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+            let sender_sign_pubkey = signed.sender_sign_pubkey.clone();
+
+            // Look up sender in trusted keys to verify identity
+            let trusted_sender = keys::find_trusted_sender(&store, &signed);
+
+            let inner_bytes = signed.open(&own_identity, trusted_sender.as_ref())?;
+            let envelope = Envelope::from_bytes(&inner_bytes)?;
+            envelope.check_age(300)?;
+
+            if !args.quiet {
+                if let Some(ref trusted) = trusted_sender {
+                    display::info("From:", &trusted.identity);
+                } else {
+                    display::warning(&format!(
+                        "received from unknown sender (signing key: {}...)",
+                        &sender_sign_pubkey[..20.min(sender_sign_pubkey.len())]
+                    ));
                 }
-                return Ok(envelope);
+                display::ok("signature verified");
             }
-            Err(_) => {
-                // Not an identity-mode transfer, try anonymous
-                tracing::debug!("not an identity-mode transfer, trying anonymous");
-            }
+            return Ok(envelope);
         }
     }
 
-    // Anonymous mode
-    let envelope = transfer::wormhole::receive(&args.code, args.relay.as_deref()).await?;
+    // Anonymous mode: parse as plain Envelope
+    if !args.quiet {
+        display::warning("received unsigned (anonymous) payload -- sender identity not verified");
+    }
+    let envelope = Envelope::from_bytes(&data)?;
     envelope.check_age(300)?;
     Ok(envelope)
 }
@@ -95,10 +101,35 @@ fn receive_filedrop(args: &ReceiveArgs) -> Result<Envelope> {
     let own_identity = keys::identity::EnsealIdentity::load(&store)?;
 
     let path = std::path::Path::new(&args.code);
-    let (envelope, sender_pubkey) = transfer::filedrop::read(path, &own_identity, None)?;
+
+    // Check file size before reading into memory
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("failed to read file: {}", path.display()))?;
+    if metadata.len() > 16 * 1024 * 1024 {
+        bail!(
+            "file too large ({} bytes, max 16 MiB): {}",
+            metadata.len(),
+            path.display()
+        );
+    }
+    // Read the signed envelope to check sender trust before full decryption
+    let data =
+        std::fs::read(path).with_context(|| format!("failed to read file: {}", path.display()))?;
+    let signed = SignedEnvelope::from_bytes(&data)?;
+    let trusted_sender = keys::find_trusted_sender(&store, &signed);
+
+    let (envelope, sender_pubkey) =
+        transfer::filedrop::read_from_bytes(&data, &own_identity, trusted_sender.as_ref())?;
 
     if !args.quiet {
-        display::info("From:", &sender_pubkey);
+        if let Some(ref trusted) = trusted_sender {
+            display::info("From:", &trusted.identity);
+        } else {
+            display::warning(&format!(
+                "received from unknown sender (signing key: {}...)",
+                &sender_pubkey[..20.min(sender_pubkey.len())]
+            ));
+        }
         display::ok("signature verified, file decrypted");
     }
 
@@ -120,7 +151,8 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
 
     // Handle clipboard
     if args.clipboard {
-        let mut clipboard = arboard::Clipboard::new()?;
+        let mut clipboard = arboard::Clipboard::new()
+            .context("clipboard not available (are you in a graphical environment?)")?;
         clipboard.set_text(payload)?;
         if let Some(ref label) = envelope.metadata.label {
             display::ok(&format!("copied to clipboard (label: \"{}\")", label));
@@ -143,7 +175,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
             } else {
                 let path = args.output.as_deref().unwrap_or(".env");
                 check_overwrite(path, args.force)?;
-                std::fs::write(path, payload)?;
+                write_secret_file(path, payload)?;
                 let count = envelope.metadata.var_count.unwrap_or(0);
                 display::ok(&format!("{} secrets written to {}", count, path));
             }
@@ -151,7 +183,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         PayloadFormat::Raw => {
             if let Some(ref path) = args.output {
                 check_overwrite(path, args.force)?;
-                std::fs::write(path, payload)?;
+                write_secret_file(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
                 print!("{}", payload);
@@ -160,7 +192,7 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         PayloadFormat::Kv => {
             if let Some(ref path) = args.output {
                 check_overwrite(path, args.force)?;
-                std::fs::write(path, payload)?;
+                write_secret_file(path, payload)?;
                 display::ok(&format!("written to {}", path));
             } else {
                 println!("{}", payload);
@@ -168,6 +200,29 @@ fn output_envelope(args: &ReceiveArgs, envelope: &Envelope) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Write a file containing secrets with restrictive permissions (0600 on Unix).
+/// Uses atomic mode setting to avoid a TOCTOU window where the file is world-readable.
+fn write_secret_file(path: &str, content: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content)?;
+    }
     Ok(())
 }
 
@@ -179,7 +234,7 @@ fn check_overwrite(path: &str, force: bool) -> Result<()> {
     if force {
         return Ok(());
     }
-    if !is_terminal::is_terminal(std::io::stderr()) {
+    if !is_terminal::is_terminal(std::io::stdin()) {
         bail!(
             "'{}' already exists. Use --force to overwrite in non-interactive mode",
             path

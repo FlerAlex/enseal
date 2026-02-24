@@ -61,6 +61,5 @@ pub fn run(args: CheckArgs) -> Result<()> {
         }
     }
 
-    // Exit with error code if missing vars
-    std::process::exit(1);
+    bail!("{} variables missing from {}", d.only_left.len(), args.file);
 }

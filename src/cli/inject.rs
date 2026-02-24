@@ -83,35 +83,71 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
         let store = keys::store::KeyStore::open()?;
         let own_identity = keys::identity::EnsealIdentity::load(&store)?;
         let path = std::path::Path::new(code);
-        let (envelope, sender_pubkey) = transfer::filedrop::read(path, &own_identity, None)?;
+
+        let metadata = std::fs::metadata(path)?;
+        if metadata.len() > 16 * 1024 * 1024 {
+            bail!(
+                "file too large ({} bytes, max 16 MiB): {}",
+                metadata.len(),
+                path.display()
+            );
+        }
+        let data = std::fs::read(path)?;
+        let signed = SignedEnvelope::from_bytes(&data)?;
+        let trusted_sender = keys::find_trusted_sender(&store, &signed);
+
+        let (envelope, sender_pubkey) =
+            transfer::filedrop::read_from_bytes(&data, &own_identity, trusted_sender.as_ref())?;
         if !args.quiet {
-            display::info("From:", &sender_pubkey);
+            if let Some(ref trusted) = trusted_sender {
+                display::info("From:", &trusted.identity);
+            } else {
+                display::warning(&format!(
+                    "received from unknown sender (signing key: {}...)",
+                    &sender_pubkey[..20.min(sender_pubkey.len())]
+                ));
+            }
             display::ok("signature verified, file decrypted");
         }
         Ok(envelope)
     } else {
-        // Try identity mode first, then anonymous
+        // Receive raw bytes once, then determine mode by trying to parse
+        let data = transfer::wormhole::receive_raw(code, args.relay.as_deref()).await?;
         let store = keys::store::KeyStore::open()?;
+
+        // Try identity mode: parse as SignedEnvelope
         if store.is_initialized() {
-            let own_identity = keys::identity::EnsealIdentity::load(&store)?;
-            match transfer::identity::receive(code, &own_identity, None, args.relay.as_deref())
-                .await
-            {
-                Ok((envelope, sender_pubkey)) => {
-                    envelope.check_age(300)?;
-                    if !args.quiet {
-                        display::info("From:", &sender_pubkey);
-                        display::ok("signature verified");
+            if let Ok(signed) = SignedEnvelope::from_bytes(&data) {
+                let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+                let sender_pubkey = signed.sender_sign_pubkey.clone();
+                let trusted_sender = keys::find_trusted_sender(&store, &signed);
+
+                let inner_bytes = signed.open(&own_identity, trusted_sender.as_ref())?;
+                let envelope = Envelope::from_bytes(&inner_bytes)?;
+                envelope.check_age(300)?;
+
+                if !args.quiet {
+                    if let Some(ref trusted) = trusted_sender {
+                        display::info("From:", &trusted.identity);
+                    } else {
+                        display::warning(&format!(
+                            "received from unknown sender (signing key: {}...)",
+                            &sender_pubkey[..20.min(sender_pubkey.len())]
+                        ));
                     }
-                    return Ok(envelope);
+                    display::ok("signature verified");
                 }
-                Err(_) => {
-                    tracing::debug!("not an identity-mode transfer, trying anonymous");
-                }
+                return Ok(envelope);
             }
         }
 
-        let envelope = transfer::wormhole::receive(code, args.relay.as_deref()).await?;
+        // Anonymous mode: parse as plain Envelope
+        if !args.quiet {
+            display::warning(
+                "received unsigned (anonymous) payload -- sender identity not verified",
+            );
+        }
+        let envelope = Envelope::from_bytes(&data)?;
         envelope.check_age(300)?;
         Ok(envelope)
     }
@@ -137,13 +173,22 @@ async fn listen_mode(args: &InjectArgs) -> Result<Envelope> {
 
     // Parse and verify signed envelope
     let signed = SignedEnvelope::from_bytes(&data)?;
-    let sender_pubkey = signed.sender_age_pubkey.clone();
-    let inner_bytes = signed.open(&own_identity, None)?;
+    let sender_pubkey = signed.sender_sign_pubkey.clone();
+    let trusted_sender = keys::find_trusted_sender(&store, &signed);
+
+    let inner_bytes = signed.open(&own_identity, trusted_sender.as_ref())?;
     let envelope = Envelope::from_bytes(&inner_bytes)?;
     envelope.check_age(300)?;
 
     if !args.quiet {
-        display::info("From:", &sender_pubkey);
+        if let Some(ref trusted) = trusted_sender {
+            display::info("From:", &trusted.identity);
+        } else {
+            display::warning(&format!(
+                "received from unknown sender (signing key: {}...)",
+                &sender_pubkey[..20.min(sender_pubkey.len())]
+            ));
+        }
         display::ok("signature verified");
     }
 
@@ -155,25 +200,25 @@ fn extract_secrets(envelope: &Envelope) -> Result<HashMap<String, String>> {
 
     match envelope.format {
         PayloadFormat::Env | PayloadFormat::Kv => {
-            for line in envelope.payload.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some(eq_pos) = line.find('=') {
-                    let key = line[..eq_pos].trim().to_string();
-                    let value = line[eq_pos + 1..].trim().to_string();
-                    // Strip surrounding quotes if present
-                    let value = strip_quotes(&value);
-                    if !key.is_empty() {
-                        secrets.insert(key, value);
-                    }
-                }
+            let env_file = crate::env::parser::parse(&envelope.payload)?;
+            for (key, value) in env_file.vars() {
+                secrets.insert(key.to_string(), value.to_string());
             }
         }
         PayloadFormat::Raw => {
             // For raw payloads, check if there's a label to use as key
             if let Some(ref label) = envelope.metadata.label {
+                // Validate label is a valid env var name
+                if label.is_empty()
+                    || label.starts_with(|c: char| c.is_ascii_digit())
+                    || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    bail!(
+                        "label '{}' is not a valid env var name (use A-Z, 0-9, _). \
+                         Sender should use --as KEY instead",
+                        label
+                    );
+                }
                 secrets.insert(label.clone(), envelope.payload.clone());
             } else {
                 bail!(
@@ -189,14 +234,6 @@ fn extract_secrets(envelope: &Envelope) -> Result<HashMap<String, String>> {
     }
 
     Ok(secrets)
-}
-
-fn strip_quotes(s: &str) -> String {
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
-    }
 }
 
 fn run_child(command: &[String], secrets: &HashMap<String, String>) -> Result<()> {
@@ -216,6 +253,24 @@ fn run_child(command: &[String], secrets: &HashMap<String, String>) -> Result<()
     }
 
     let status = child.wait()?;
+
+    // On Unix, if the child was killed by a signal, re-raise it so the
+    // parent process reports the correct termination reason to callers.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            unsafe {
+                // Reset to default handler so the re-raised signal terminates us
+                libc::signal(sig, libc::SIG_DFL);
+                libc::raise(sig);
+            }
+        }
+    }
+
+    // Flush before exit since process::exit() skips Drop
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let _ = std::io::Write::flush(&mut std::io::stdout());
     std::process::exit(status.code().unwrap_or(1));
 }
 
@@ -226,22 +281,23 @@ fn setup_signal_forwarding(child_pid: u32) {
     static CHILD_PID: AtomicU32 = AtomicU32::new(0);
     CHILD_PID.store(child_pid, Ordering::SeqCst);
 
+    // Use sigaction instead of signal for reliable handler persistence
+    // across invocations (BSD semantics on all platforms).
     unsafe {
-        libc::signal(
-            libc::SIGINT,
-            forward_signal as *const () as libc::sighandler_t,
-        );
-        libc::signal(
-            libc::SIGTERM,
-            forward_signal as *const () as libc::sighandler_t,
-        );
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = forward_signal as *const () as libc::sighandler_t;
+        sa.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut sa.sa_mask);
+
+        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
     }
 
     extern "C" fn forward_signal(sig: libc::c_int) {
         let pid = CHILD_PID.load(std::sync::atomic::Ordering::SeqCst);
         if pid != 0 {
             unsafe {
-                libc::kill(pid as i32, sig);
+                libc::kill(pid as libc::pid_t, sig);
             }
         }
     }

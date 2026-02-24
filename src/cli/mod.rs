@@ -32,10 +32,6 @@ pub struct Cli {
     /// Minimal output (for scripting)
     #[arg(long, short, global = true)]
     pub quiet: bool,
-
-    /// Path to .enseal.toml manifest
-    #[arg(long, global = true)]
-    pub config: Option<String>,
 }
 
 #[derive(Subcommand)]

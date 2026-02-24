@@ -1,8 +1,25 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::store::KeyStore;
+
+/// Validate that an alias name contains only safe characters.
+fn validate_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("alias name cannot be empty");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        bail!(
+            "alias name '{}' contains invalid characters (use A-Z, a-z, 0-9, _, -)",
+            name
+        );
+    }
+    Ok(())
+}
 
 /// Resolve an alias to its identity, returning None if not found.
 pub fn resolve(store: &KeyStore, name: &str) -> Result<Option<String>> {
@@ -12,6 +29,8 @@ pub fn resolve(store: &KeyStore, name: &str) -> Result<Option<String>> {
 
 /// Add or update an alias mapping.
 pub fn set(store: &KeyStore, alias: &str, identity: &str) -> Result<()> {
+    validate_name(alias)?;
+    crate::keys::store::validate_identity_name(identity)?;
     let mut aliases = load_aliases(store)?;
     aliases.insert(alias.to_string(), identity.to_string());
     save_aliases(store, &aliases)
