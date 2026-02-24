@@ -58,6 +58,7 @@ pub async fn send(
 
 /// Receive an identity-mode envelope via wormhole relay.
 /// Verifies signature and decrypts with own age key.
+#[allow(dead_code)]
 pub async fn receive(
     code: &str,
     own_identity: &EnsealIdentity,

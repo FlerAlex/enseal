@@ -92,6 +92,7 @@ pub async fn receive_raw(code: &str, relay_url: Option<&str>) -> Result<Vec<u8>>
 }
 
 /// Receive an envelope via magic-wormhole using the given code.
+#[allow(dead_code)]
 pub async fn receive(code: &str, relay_url: Option<&str>) -> Result<Envelope> {
     let data = receive_raw(code, relay_url).await?;
     let envelope = Envelope::from_bytes(&data)?;

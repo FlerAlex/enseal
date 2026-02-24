@@ -7,7 +7,9 @@ use axum::Router;
 /// Server configuration.
 #[cfg(feature = "server")]
 pub struct ServerConfig {
+    #[allow(dead_code)]
     pub port: u16,
+    #[allow(dead_code)]
     pub bind: String,
     pub max_channels: usize,
     pub channel_ttl_secs: u64,

@@ -56,6 +56,7 @@ pub fn write(
 }
 
 /// Read and decrypt a file drop.
+#[allow(dead_code)]
 pub fn read(
     path: &Path,
     own_identity: &EnsealIdentity,

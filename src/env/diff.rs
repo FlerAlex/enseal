@@ -10,6 +10,7 @@ pub struct EnvDiff {
     /// Keys only in the second file.
     pub only_right: Vec<String>,
     /// Keys present in both files.
+    #[allow(dead_code)]
     pub common: Vec<String>,
 }
 

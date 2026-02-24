@@ -134,6 +134,7 @@ pub async fn listen(relay_url: &str, channel_id: &str) -> Result<Vec<u8>> {
 }
 
 /// Generate a short channel code for relay transport.
+#[allow(dead_code)]
 pub fn generate_code() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();

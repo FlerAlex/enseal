@@ -51,6 +51,7 @@ impl KeyStore {
     }
 
     /// Open the key store at a specific directory (for testing).
+    #[allow(dead_code)]
     pub fn open_at(base_dir: PathBuf) -> Self {
         Self { base_dir }
     }

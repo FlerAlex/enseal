@@ -3,13 +3,16 @@ use super::EnvFile;
 /// Validation issue found in an .env file.
 #[derive(Debug)]
 pub struct ValidationIssue {
+    #[allow(dead_code)]
     pub key: String,
     pub message: String,
+    #[allow(dead_code)]
     pub severity: Severity,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Severity {
+    #[allow(dead_code)]
     Error,
     Warning,
 }

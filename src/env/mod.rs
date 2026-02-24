@@ -51,6 +51,7 @@ impl EnvFile {
     }
 
     /// Look up a value by key. Returns the last occurrence.
+    #[allow(dead_code)]
     pub fn get(&self, key: &str) -> Option<&str> {
         self.entries.iter().rev().find_map(|e| match e {
             Entry::KeyValue { key: k, value } if k == key => Some(value.as_str()),
