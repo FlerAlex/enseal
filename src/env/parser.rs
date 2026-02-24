@@ -24,12 +24,21 @@ pub fn parse(input: &str) -> Result<EnvFile> {
             continue;
         }
 
+        // Strip `export ` prefix (common in shell-sourced .env files)
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+
         // Must contain '=' for a valid key-value pair
         let Some(eq_pos) = trimmed.find('=') else {
+            let preview = if trimmed.chars().count() > 20 {
+                let truncated: String = trimmed.chars().take(20).collect();
+                format!("{}...", truncated)
+            } else {
+                trimmed.to_string()
+            };
             bail!(
                 "line {}: invalid syntax (no '=' found): {}",
                 line_num + 1,
-                trimmed
+                preview
             );
         };
 
@@ -109,7 +118,16 @@ fn strip_quotes(raw: &str, quote: char, line_num: usize) -> Result<String> {
         loop {
             match chars.next() {
                 Some('\\') => match chars.next() {
-                    Some(c) => result.push(c),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('r') => result.push('\r'),
+                    Some(c) => {
+                        // Unknown escape: preserve backslash
+                        result.push('\\');
+                        result.push(c);
+                    }
                     None => bail!("line {}: unterminated escape sequence", line_num),
                 },
                 Some(c) if c == quote => {
@@ -289,5 +307,27 @@ mod tests {
         let env = parse(input).unwrap();
         let keys: Vec<&str> = env.keys();
         assert_eq!(keys, vec!["Z", "A", "M"]);
+    }
+
+    #[test]
+    fn export_prefix_stripped() {
+        let env = parse("export KEY=value").unwrap();
+        assert_eq!(env.get("KEY"), Some("value"));
+        assert_eq!(env.var_count(), 1);
+    }
+
+    #[test]
+    fn export_prefix_mixed() {
+        let input = "A=1\nexport B=2\nC=3\n";
+        let env = parse(input).unwrap();
+        assert_eq!(env.get("A"), Some("1"));
+        assert_eq!(env.get("B"), Some("2"));
+        assert_eq!(env.get("C"), Some("3"));
+    }
+
+    #[test]
+    fn export_prefix_quoted_value() {
+        let env = parse(r#"export KEY="hello world""#).unwrap();
+        assert_eq!(env.get("KEY"), Some("hello world"));
     }
 }

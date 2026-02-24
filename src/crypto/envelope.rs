@@ -7,12 +7,23 @@ use sha2::{Digest, Sha256};
 use crate::cli::input::PayloadFormat;
 
 /// The wire format for an enseal transfer.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Envelope {
     pub version: u32,
     pub format: PayloadFormat,
     pub metadata: Metadata,
     pub payload: String,
+}
+
+impl std::fmt::Debug for Envelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Envelope")
+            .field("version", &self.version)
+            .field("format", &self.format)
+            .field("metadata", &self.metadata)
+            .field("payload", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,16 +73,18 @@ impl Envelope {
     /// Check that the envelope is not older than `max_age_secs`.
     /// Returns an error if the envelope is too old (replay protection).
     pub fn check_age(&self, max_age_secs: u64) -> Result<()> {
+        if self.metadata.created_at == 0 {
+            bail!("envelope has no timestamp (created_at is 0). This may indicate tampering or a replay attempt");
+        }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let age = now.saturating_sub(self.metadata.created_at);
-        if self.metadata.created_at == 0 {
-            // Legacy envelope without timestamp — allow but warn
-            tracing::warn!("envelope has no timestamp, skipping age check");
-            return Ok(());
+        // Reject future timestamps (clock skew tolerance: 60 seconds)
+        if self.metadata.created_at > now + 60 {
+            bail!("envelope timestamp is in the future. Clock skew or tampering suspected");
         }
+        let age = now.saturating_sub(self.metadata.created_at);
         if age > max_age_secs {
             bail!(
                 "envelope expired: created {} seconds ago (max {})",
@@ -89,8 +102,17 @@ impl Envelope {
 
     /// Deserialize an envelope from JSON bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        if data.len() > 16 * 1024 * 1024 {
+            bail!("envelope data exceeds maximum size (16 MiB)");
+        }
+
         let envelope: Self =
             serde_json::from_slice(data).context("failed to deserialize envelope")?;
+
+        // Validate version
+        if envelope.version != 1 {
+            bail!("unsupported envelope version: {}", envelope.version);
+        }
 
         // Verify integrity
         let expected_hash = hex_sha256(&envelope.payload);

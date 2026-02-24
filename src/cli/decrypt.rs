@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args;
 
 use crate::crypto::at_rest;
@@ -16,6 +16,10 @@ pub struct DecryptArgs {
     /// Output path (default: strip .encrypted suffix, or <file>.decrypted)
     #[arg(long, short)]
     pub output: Option<String>,
+
+    /// Overwrite existing files without prompting
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub fn run(args: DecryptArgs) -> Result<()> {
@@ -64,7 +68,9 @@ fn decrypt_whole_file(
         }
     });
 
-    std::fs::write(&output_path, &plaintext)
+    check_overwrite(&output_path, args.force)?;
+
+    write_secret_file(&output_path, &plaintext)
         .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
 
     let env_file = env::parser::parse(&String::from_utf8_lossy(&plaintext)).ok();
@@ -82,6 +88,28 @@ fn decrypt_whole_file(
     Ok(())
 }
 
+/// Write a file containing secrets with restrictive permissions (0600 on Unix).
+fn write_secret_file(path: &str, content: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content)?;
+    }
+    Ok(())
+}
+
 fn decrypt_per_var(args: &DecryptArgs, content: &str, identity: &EnsealIdentity) -> Result<()> {
     let env_file = env::parser::parse(content)?;
     let decrypted = at_rest::decrypt_per_var(&env_file, &identity.age_identity)?;
@@ -89,7 +117,9 @@ fn decrypt_per_var(args: &DecryptArgs, content: &str, identity: &EnsealIdentity)
 
     let output_path = args.output.clone().unwrap_or_else(|| args.file.clone());
 
-    std::fs::write(&output_path, &output_str)
+    check_overwrite(&output_path, args.force)?;
+
+    write_secret_file(&output_path, output_str.as_bytes())
         .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
 
     display::ok(&format!(
@@ -98,5 +128,29 @@ fn decrypt_per_var(args: &DecryptArgs, content: &str, identity: &EnsealIdentity)
         decrypted.var_count()
     ));
 
+    Ok(())
+}
+
+/// Check if the target file exists and handle overwrite confirmation.
+fn check_overwrite(path: &str, force: bool) -> Result<()> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(());
+    }
+    if force {
+        return Ok(());
+    }
+    if !is_terminal::is_terminal(std::io::stdin()) {
+        bail!(
+            "'{}' already exists. Use --force to overwrite in non-interactive mode",
+            path
+        );
+    }
+    let confirm = dialoguer::Confirm::new()
+        .with_prompt(format!("'{}' already exists. Overwrite?", path))
+        .default(false)
+        .interact()?;
+    if !confirm {
+        bail!("aborted: not overwriting '{}'", path);
+    }
     Ok(())
 }

@@ -24,6 +24,10 @@ pub struct EncryptArgs {
     /// Encrypt to specific recipient(s) (can be repeated)
     #[arg(long)]
     pub to: Vec<String>,
+
+    /// Overwrite existing files without prompting
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub fn run(args: EncryptArgs) -> Result<()> {
@@ -53,7 +57,8 @@ fn encrypt_whole_file(
         .clone()
         .unwrap_or_else(|| format!("{}.encrypted", args.file));
 
-    std::fs::write(&output_path, &ciphertext)
+    check_overwrite(&output_path, args.force)?;
+    write_secret_file(&output_path, &ciphertext)
         .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
 
     let env_file = env::parser::parse(content).ok();
@@ -88,7 +93,11 @@ fn encrypt_per_var(
 
     let output_path = args.output.clone().unwrap_or_else(|| args.file.clone());
 
-    std::fs::write(&output_path, &output_str)
+    if output_path == args.file {
+        display::warning("per-var encryption will replace the plaintext file in-place");
+    }
+    check_overwrite(&output_path, args.force)?;
+    write_secret_file(&output_path, output_str.as_bytes())
         .map_err(|e| anyhow::anyhow!("failed to write '{}': {}", output_path, e))?;
 
     display::ok(&format!(
@@ -97,6 +106,52 @@ fn encrypt_per_var(
         env_file.var_count()
     ));
 
+    Ok(())
+}
+
+/// Write a file with restrictive permissions (0600 on Unix).
+fn write_secret_file(path: &str, content: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content)?;
+    }
+    Ok(())
+}
+
+/// Check if the target file exists and handle overwrite confirmation.
+fn check_overwrite(path: &str, force: bool) -> Result<()> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(());
+    }
+    if force {
+        return Ok(());
+    }
+    if !is_terminal::is_terminal(std::io::stdin()) {
+        bail!(
+            "'{}' already exists. Use --force to overwrite in non-interactive mode",
+            path
+        );
+    }
+    let confirm = dialoguer::Confirm::new()
+        .with_prompt(format!("'{}' already exists. Overwrite?", path))
+        .default(false)
+        .interact()?;
+    if !confirm {
+        bail!("aborted: not overwriting '{}'", path);
+    }
     Ok(())
 }
 

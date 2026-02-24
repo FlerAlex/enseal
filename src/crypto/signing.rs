@@ -11,7 +11,10 @@ pub struct SignedEnvelope {
     pub ciphertext: Vec<u8>,
     /// Sender's ed25519 public key (base64).
     pub sender_sign_pubkey: String,
-    /// Sender's age public key (for the recipient to verify identity).
+    /// Sender's age public key (for display purposes only).
+    /// WARNING: This field is NOT covered by the ed25519 signature.
+    /// Do NOT display this as identity information for unknown senders --
+    /// use sender_sign_pubkey instead (which is authenticated by the signature).
     pub sender_age_pubkey: String,
     /// Ed25519 signature over the ciphertext bytes.
     pub signature: String,
@@ -97,16 +100,42 @@ impl SignedEnvelope {
 
     /// Deserialize from JSON bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        serde_json::from_slice(data).context("failed to deserialize signed envelope")
+        if data.len() > 16 * 1024 * 1024 {
+            bail!("signed envelope data exceeds maximum size (16 MiB)");
+        }
+
+        let envelope: Self =
+            serde_json::from_slice(data).context("failed to deserialize signed envelope")?;
+
+        // Validate field lengths to prevent memory exhaustion from crafted inputs.
+        // Base64-encoded 32-byte key = ~44 chars; 64-byte signature = ~88 chars.
+        if envelope.sender_sign_pubkey.len() > 100 {
+            bail!("sender signing key field too long");
+        }
+        if envelope.sender_age_pubkey.len() > 100 {
+            bail!("sender age key field too long");
+        }
+        if envelope.signature.len() > 200 {
+            bail!("signature field too long");
+        }
+        if envelope.ciphertext.len() > 16 * 1024 * 1024 {
+            bail!("ciphertext field too large (max 16 MiB)");
+        }
+
+        Ok(envelope)
     }
 }
 
 /// Encrypt data with age to one or more recipients.
 fn age_encrypt_multi(data: &[u8], recipients: &[&age::x25519::Recipient]) -> Result<Vec<u8>> {
+    if recipients.is_empty() {
+        bail!("at least one recipient is required for encryption");
+    }
+
     let recipients_iter = recipients.iter().map(|r| *r as &dyn age::Recipient);
 
-    let encryptor =
-        age::Encryptor::with_recipients(recipients_iter).expect("recipients should not be empty");
+    let encryptor = age::Encryptor::with_recipients(recipients_iter)
+        .map_err(|e| anyhow::anyhow!("failed to create encryptor: {}", e))?;
 
     let mut encrypted = vec![];
     let mut writer = encryptor

@@ -163,7 +163,7 @@ impl TrustedKey {
 
     /// Load a trusted key from the store by identity name.
     pub fn load(store: &KeyStore, identity: &str) -> Result<Self> {
-        let path = store.trusted_key_path(identity);
+        let path = store.trusted_key_path(identity)?;
         if !path.exists() {
             bail!(
                 "no public key found for '{}'. Import with: enseal keys import <file>",
@@ -316,7 +316,11 @@ mod tests {
         let content = format_pubkey_file("alice@example.com", &age_pub, &sign_pub);
 
         // Write to trusted dir
-        std::fs::write(store.trusted_key_path("alice@example.com"), &content).unwrap();
+        std::fs::write(
+            store.trusted_key_path("alice@example.com").unwrap(),
+            &content,
+        )
+        .unwrap();
 
         let loaded = TrustedKey::load(&store, "alice@example.com").unwrap();
         assert_eq!(loaded.identity, "alice@example.com");

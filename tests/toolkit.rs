@@ -126,7 +126,7 @@ fn diff_shows_missing_and_extra() {
     enseal()
         .args(["diff", f1.to_str().unwrap(), f2.to_str().unwrap()])
         .assert()
-        .success()
+        .code(1)
         .stdout(predicate::str::contains("A"))
         .stdout(predicate::str::contains("C"));
 }

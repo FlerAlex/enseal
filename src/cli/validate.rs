@@ -43,21 +43,14 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     }
 
     let total = env_file.var_count();
-    let passed = total.saturating_sub(
-        errors
-            .iter()
-            .map(|e| e.key.as_str())
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-    );
+    let failed_keys = errors
+        .iter()
+        .map(|e| e.key.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let passed = total.saturating_sub(failed_keys);
 
     eprintln!();
-    if passed == total {
-        display::ok(&format!("{}/{} variables passed validation", passed, total));
-    } else {
-        display::error(&format!("{}/{} variables passed validation", passed, total));
-        bail!("validation failed");
-    }
-
-    Ok(())
+    display::error(&format!("{}/{} variables passed validation", passed, total));
+    bail!("validation failed")
 }

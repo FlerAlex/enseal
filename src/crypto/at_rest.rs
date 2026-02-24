@@ -64,6 +64,12 @@ pub fn decrypt_per_var(env: &EnvFile, identity: &age::x25519::Identity) -> Resul
             Entry::KeyValue { key, value } => {
                 let decrypted_value = if is_encrypted_value(value) {
                     let encoded = &value[PER_VAR_PREFIX.len()..value.len() - PER_VAR_SUFFIX.len()];
+                    if encoded.len() > 1024 * 1024 {
+                        bail!(
+                            "encrypted value for '{}' exceeds maximum size (1 MB encoded)",
+                            key
+                        );
+                    }
                     let ciphertext = base64::engine::general_purpose::STANDARD
                         .decode(encoded)
                         .with_context(|| {
@@ -98,7 +104,9 @@ pub fn decrypt_per_var(env: &EnvFile, identity: &age::x25519::Identity) -> Resul
 
 /// Check if a value is an `ENC[age:...]` encrypted value.
 pub fn is_encrypted_value(value: &str) -> bool {
-    value.starts_with(PER_VAR_PREFIX) && value.ends_with(PER_VAR_SUFFIX)
+    value.starts_with(PER_VAR_PREFIX)
+        && value.ends_with(PER_VAR_SUFFIX)
+        && value.len() > PER_VAR_PREFIX.len() + PER_VAR_SUFFIX.len()
 }
 
 /// Detect whether a file is per-variable encrypted (contains `ENC[age:...]` values).
@@ -133,8 +141,8 @@ fn age_encrypt_multi(data: &[u8], recipients: &[&age::x25519::Recipient]) -> Res
 
     let recipients_iter = recipients.iter().map(|r| *r as &dyn age::Recipient);
 
-    let encryptor =
-        age::Encryptor::with_recipients(recipients_iter).expect("recipients should not be empty");
+    let encryptor = age::Encryptor::with_recipients(recipients_iter)
+        .map_err(|e| anyhow::anyhow!("failed to create encryptor: {}", e))?;
 
     let mut encrypted = vec![];
     let mut writer = encryptor

@@ -26,6 +26,10 @@ pub enum KeysCommand {
     Import {
         /// Path to a .pub file
         file: String,
+
+        /// Skip confirmation prompt (for scripted workflows)
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Show all trusted keys and aliases
@@ -99,7 +103,7 @@ pub fn run(args: KeysArgs) -> Result<()> {
     match args.command {
         KeysCommand::Init => cmd_init(),
         KeysCommand::Export => cmd_export(),
-        KeysCommand::Import { file } => cmd_import(&file),
+        KeysCommand::Import { file, yes } => cmd_import(&file, yes),
         KeysCommand::List => cmd_list(),
         KeysCommand::Remove { identity } => cmd_remove(&identity),
         KeysCommand::Fingerprint => cmd_fingerprint(),
@@ -140,14 +144,14 @@ fn cmd_export() -> Result<()> {
         .encode(identity.signing_key.verifying_key().to_bytes());
 
     // Use hostname or "unknown" as the identity label
-    let hostname = hostname_or_unknown();
+    let hostname = username_or_unknown();
     let content = format_pubkey_file(&hostname, &age_pub, &sign_pub);
     print!("{}", content);
 
     Ok(())
 }
 
-fn cmd_import(file: &str) -> Result<()> {
+fn cmd_import(file: &str, skip_confirm: bool) -> Result<()> {
     let store = KeyStore::open()?;
     let content = std::fs::read_to_string(file)
         .map_err(|e| anyhow::anyhow!("failed to read '{}': {}", file, e))?;
@@ -159,6 +163,9 @@ fn cmd_import(file: &str) -> Result<()> {
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
 
+    // Validate identity name is safe for file paths
+    crate::keys::store::validate_identity_name(identity_name)?;
+
     // Parse to validate
     let trusted = TrustedKey::parse(identity_name, &content)?;
 
@@ -168,14 +175,14 @@ fn cmd_import(file: &str) -> Result<()> {
     println!("  fingerprint: {}", trusted.fingerprint());
     println!();
 
-    if !confirm("Trust this key?")? {
+    if !skip_confirm && !confirm("Trust this key?")? {
         println!("import cancelled");
         return Ok(());
     }
 
     // Write to trusted directory
     store.ensure_dirs()?;
-    let dest = store.trusted_key_path(identity_name);
+    let dest = store.trusted_key_path(identity_name)?;
     std::fs::write(&dest, &content)?;
 
     display::ok(&format!("imported key for '{}'", identity_name));
@@ -236,14 +243,37 @@ fn cmd_list() -> Result<()> {
 }
 
 fn cmd_remove(identity: &str) -> Result<()> {
+    crate::keys::store::validate_identity_name(identity)?;
     let store = KeyStore::open()?;
-    let path = store.trusted_key_path(identity);
+    let path = store.trusted_key_path(identity)?;
 
     if !path.exists() {
         bail!("no trusted key found for '{}'", identity);
     }
 
     std::fs::remove_file(&path)?;
+
+    // Clean up aliases pointing to this identity
+    let aliases = alias::list(&store)?;
+    for (name, target) in &aliases {
+        if target == identity {
+            let _ = alias::remove(&store, name);
+            display::warning(&format!(
+                "removed alias '{}' (pointed to removed key)",
+                name
+            ));
+        }
+    }
+
+    // Clean up group memberships
+    let groups = group::list_groups(&store)?;
+    for (name, entry) in &groups {
+        if entry.members.contains(&identity.to_string()) {
+            let _ = group::remove_member(&store, name, identity);
+            display::warning(&format!("removed '{}' from group '{}'", identity, name));
+        }
+    }
+
     display::ok(&format!("removed trusted key for '{}'", identity));
 
     Ok(())
@@ -332,13 +362,16 @@ fn cmd_group(command: GroupCommand) -> Result<()> {
     Ok(())
 }
 
-fn hostname_or_unknown() -> String {
+fn username_or_unknown() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
 fn confirm(prompt: &str) -> Result<bool> {
+    if !is_terminal::is_terminal(std::io::stdin()) {
+        bail!("cannot prompt for confirmation in non-interactive mode. Use --yes to skip");
+    }
     use dialoguer::Confirm;
     let result = Confirm::new()
         .with_prompt(prompt)

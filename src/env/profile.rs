@@ -10,6 +10,22 @@ use anyhow::{bail, Result};
 ///
 /// Returns the path if found, or an error if neither exists.
 pub fn resolve(profile: &str, dir: &Path) -> Result<PathBuf> {
+    if profile.is_empty() {
+        bail!("profile name cannot be empty");
+    }
+    if profile.contains('/') || profile.contains('\\') || profile.contains('\0') {
+        bail!(
+            "profile name '{}' contains invalid characters (path separators or null bytes)",
+            profile
+        );
+    }
+    if profile.contains("..") {
+        bail!(
+            "profile name '{}' contains '..', which is not allowed",
+            profile
+        );
+    }
+
     let primary = dir.join(format!(".env.{}", profile));
     if primary.exists() {
         return Ok(primary);

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 
@@ -38,8 +38,6 @@ fn resolve_value(
 ) -> Result<String> {
     let mut result = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
-    // Track which vars this value references (for cycle detection)
-    let mut seen_refs: HashSet<String> = HashSet::new();
 
     while let Some(ch) = chars.next() {
         if ch == '$' && chars.peek() == Some(&'{') {
@@ -95,15 +93,6 @@ fn resolve_value(
                     );
                 }
                 continue;
-            }
-
-            // Cycle detection
-            if !seen_refs.insert(var_name.clone()) {
-                bail!(
-                    "circular reference detected: '{}' references '{}' multiple times",
-                    current_key,
-                    var_name,
-                );
             }
 
             result.push_str(&resolved[&var_name]);
@@ -207,7 +196,8 @@ mod tests {
     fn dollar_without_brace_is_literal() {
         let input = "PRICE=$100\n";
         let result = interpolate_str(input).unwrap();
-        assert!(result.contains("PRICE=$100"));
+        // Value containing $ is now quoted in Display to prevent interpolation injection
+        assert!(result.contains("PRICE=\"$100\""));
     }
 
     #[test]
@@ -216,5 +206,12 @@ mod tests {
         let result = interpolate_str(input).unwrap();
         // Empty default means empty string
         assert!(result.contains("X="));
+    }
+
+    #[test]
+    fn duplicate_reference_allowed() {
+        let input = "BIN=/usr/local/bin\nPATH=${BIN}/foo:${BIN}/bar\n";
+        let result = interpolate_str(input).unwrap();
+        assert!(result.contains("PATH=/usr/local/bin/foo:/usr/local/bin/bar"));
     }
 }

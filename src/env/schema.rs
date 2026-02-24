@@ -87,7 +87,7 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
                 if value.parse::<i64>().is_err() {
                     errors.push(SchemaError {
                         key: key.to_string(),
-                        message: format!("value \"{}\" is not an integer", value),
+                        message: "value is not an integer".to_string(),
                     });
                 }
             }
@@ -96,7 +96,7 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
                 if !["true", "false", "1", "0", "yes", "no"].contains(&lower.as_str()) {
                     errors.push(SchemaError {
                         key: key.to_string(),
-                        message: format!("value \"{}\" is not a boolean", value),
+                        message: "value is not a boolean".to_string(),
                     });
                 }
             }
@@ -111,25 +111,42 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
                 {
                     errors.push(SchemaError {
                         key: key.to_string(),
-                        message: format!("value \"{}\" doesn't look like a URL", value),
+                        message: "value doesn't look like a URL".to_string(),
                     });
                 }
             }
             "email" => {
-                if !value.contains('@') || !value.contains('.') {
+                let valid = if let Some(at) = value.find('@') {
+                    at > 0 && at < value.len() - 1 && value[at + 1..].contains('.')
+                } else {
+                    false
+                };
+                if !valid {
                     errors.push(SchemaError {
                         key: key.to_string(),
-                        message: format!("value \"{}\" doesn't look like an email", value),
+                        message: "value doesn't look like an email".to_string(),
                     });
                 }
             }
-            _ => {}
+            "string" => {} // any value is a valid string
+            unknown => {
+                errors.push(SchemaError {
+                    key: key.to_string(),
+                    message: format!(
+                        "unknown type '{}' (expected: string, integer, boolean, url, email)",
+                        unknown
+                    ),
+                });
+            }
         }
     }
 
     // Pattern check
     if let Some(ref pattern) = rule.pattern {
-        match regex::Regex::new(pattern) {
+        match regex::RegexBuilder::new(pattern)
+            .size_limit(100 * 1024)
+            .build()
+        {
             Ok(re) => {
                 if !re.is_match(value) {
                     errors.push(SchemaError {
@@ -147,32 +164,45 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
         }
     }
 
-    // Length checks
+    // Length checks (character count, not byte count, for correct Unicode behavior)
     if let Some(min) = rule.min_length {
-        if value.len() < min {
+        let char_count = value.chars().count();
+        if char_count < min {
             errors.push(SchemaError {
                 key: key.to_string(),
-                message: format!("length {} is below minimum {}", value.len(), min),
+                message: format!("length {} is below minimum {}", char_count, min),
             });
         }
     }
     if let Some(max) = rule.max_length {
-        if value.len() > max {
+        let char_count = value.chars().count();
+        if char_count > max {
             errors.push(SchemaError {
                 key: key.to_string(),
-                message: format!("length {} exceeds maximum {}", value.len(), max),
+                message: format!("length {} exceeds maximum {}", char_count, max),
             });
         }
     }
 
     // Range check (integer only)
     if let Some([min, max]) = rule.range {
-        if let Ok(n) = value.parse::<i64>() {
-            if n < min || n > max {
-                errors.push(SchemaError {
-                    key: key.to_string(),
-                    message: format!("value {} is outside range [{}, {}]", n, min, max),
-                });
+        match value.parse::<i64>() {
+            Ok(n) => {
+                if n < min || n > max {
+                    errors.push(SchemaError {
+                        key: key.to_string(),
+                        message: format!("value is outside range [{}, {}]", min, max),
+                    });
+                }
+            }
+            Err(_) => {
+                // Only flag if type check didn't already catch this
+                if rule.var_type.as_deref() != Some("integer") {
+                    errors.push(SchemaError {
+                        key: key.to_string(),
+                        message: "range check requires an integer value".to_string(),
+                    });
+                }
             }
         }
     }
@@ -182,11 +212,7 @@ fn validate_rule(key: &str, value: &str, rule: &Rule) -> Vec<SchemaError> {
         if !allowed.iter().any(|a| a == value) {
             errors.push(SchemaError {
                 key: key.to_string(),
-                message: format!(
-                    "value \"{}\" not in allowed values: {}",
-                    value,
-                    allowed.join(", ")
-                ),
+                message: format!("value not in allowed values: {}", allowed.join(", ")),
             });
         }
     }
@@ -372,7 +398,7 @@ mod tests {
         let errors = validate(&env, &schema);
         assert!(errors
             .iter()
-            .any(|e| e.key == "LOG_LEVEL" && e.message.contains("not in allowed")));
+            .any(|e| e.key == "LOG_LEVEL" && e.message.contains("not in allowed values")));
     }
 
     #[test]

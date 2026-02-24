@@ -34,6 +34,26 @@ pub fn select_input(
     file: Option<&str>,
     quiet: bool,
 ) -> Result<PayloadInput> {
+    // Validate label early if provided
+    if let Some(label) = label {
+        if label.len() > 256 {
+            bail!("label is too long (max 256 characters)");
+        }
+        if label.contains('\n') || label.contains('\r') || label.contains('\0') {
+            bail!("label contains invalid characters (newlines or null bytes)");
+        }
+    }
+
+    // Reject incompatible flag combinations early
+    if secret.is_some() && as_key.is_some() {
+        bail!("--as cannot be used with --secret. Use --secret KEY=VALUE instead");
+    }
+    if as_key.is_some() && secret.is_none() && std::io::stdin().is_terminal() {
+        bail!(
+            "--as can only be used with piped stdin input. Usage: cat file | enseal share --as KEY"
+        );
+    }
+
     // 1. Inline secret (--secret flag)
     if let Some(secret) = secret {
         if !quiet {
@@ -43,12 +63,20 @@ pub fn select_input(
             );
         }
 
-        if secret.contains('=') && !secret.starts_with('=') {
-            return Ok(PayloadInput {
-                content: secret.to_string(),
-                format: PayloadFormat::Kv,
-                label: label.map(|s| s.to_string()),
-            });
+        if let Some(eq_pos) = secret.find('=') {
+            let key_part = &secret[..eq_pos];
+            // Only classify as KV if the part before = looks like a valid env var name
+            if !key_part.is_empty()
+                && key_part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Ok(PayloadInput {
+                    content: secret.to_string(),
+                    format: PayloadFormat::Kv,
+                    label: label.map(|s| s.to_string()),
+                });
+            }
         }
 
         return Ok(PayloadInput {
@@ -60,8 +88,14 @@ pub fn select_input(
 
     // 2. Stdin pipe (non-TTY stdin)
     if !std::io::stdin().is_terminal() {
+        const MAX_STDIN_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
         let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf)?;
+        std::io::stdin()
+            .take(MAX_STDIN_SIZE + 1)
+            .read_to_string(&mut buf)?;
+        if buf.len() as u64 > MAX_STDIN_SIZE {
+            bail!("stdin input exceeds maximum size (10 MB)");
+        }
         let buf = buf.trim_end_matches('\n').to_string();
         if buf.is_empty() {
             bail!("empty input from stdin");
@@ -69,6 +103,18 @@ pub fn select_input(
 
         // --as flag wraps raw input as KEY=VALUE
         if let Some(key) = as_key {
+            if key.is_empty()
+                || key.starts_with(|c: char| c.is_ascii_digit())
+                || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                bail!(
+                    "--as value '{}' is not a valid env var name (use A-Z, 0-9, _)",
+                    key
+                );
+            }
+            if buf.contains('\n') {
+                bail!("--as cannot wrap multi-line input as a single KEY=VALUE pair");
+            }
             return Ok(PayloadInput {
                 content: format!("{key}={buf}"),
                 format: PayloadFormat::Kv,
@@ -98,10 +144,13 @@ pub fn select_input(
         bail!("{} not found", path);
     }
     let content = std::fs::read_to_string(path)?;
+    if content.trim().is_empty() {
+        bail!("{} is empty", path);
+    }
     Ok(PayloadInput {
         content,
         format: PayloadFormat::Env,
-        label: None,
+        label: label.map(|s| s.to_string()),
     })
 }
 

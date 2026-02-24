@@ -1,7 +1,40 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use directories::ProjectDirs;
+
+/// Validate that an identity name is safe for use in file paths.
+/// Rejects path separators, `..` components, and null bytes.
+pub fn validate_identity_name(identity: &str) -> Result<()> {
+    if identity.is_empty() {
+        bail!("identity name cannot be empty");
+    }
+    if identity.contains('/') || identity.contains('\\') {
+        bail!(
+            "identity name '{}' contains path separators, which is not allowed",
+            identity
+        );
+    }
+    if identity.contains("..") {
+        bail!(
+            "identity name '{}' contains '..', which is not allowed",
+            identity
+        );
+    }
+    if identity.contains('\0') {
+        bail!("identity name contains null bytes, which is not allowed");
+    }
+    if identity.starts_with('.') {
+        bail!("identity name '{}' cannot start with a dot", identity);
+    }
+    if identity.chars().any(|c| c.is_ascii_control() || c == ' ') {
+        bail!(
+            "identity name '{}' contains whitespace or control characters, which is not allowed",
+            identity
+        );
+    }
+    Ok(())
+}
 
 /// Manages the `~/.config/enseal/keys/` directory and file layout.
 pub struct KeyStore {
@@ -61,8 +94,11 @@ impl KeyStore {
 
     // --- Trusted key paths ---
 
-    pub fn trusted_key_path(&self, identity: &str) -> PathBuf {
-        self.trusted_dir().join(format!("{}.pub", identity))
+    /// Get the path for a trusted key file, validating the identity name.
+    /// Returns an error if the identity name contains path traversal characters.
+    pub fn trusted_key_path(&self, identity: &str) -> Result<PathBuf> {
+        validate_identity_name(identity)?;
+        Ok(self.trusted_dir().join(format!("{}.pub", identity)))
     }
 
     // --- Config file paths ---
@@ -75,9 +111,12 @@ impl KeyStore {
         self.base_dir.join("groups.toml")
     }
 
-    /// Check whether own keys have been initialized.
+    /// Check whether own keys have been initialized (all four key files present).
     pub fn is_initialized(&self) -> bool {
-        self.age_private_key_path().exists() && self.sign_private_key_path().exists()
+        self.age_private_key_path().exists()
+            && self.sign_private_key_path().exists()
+            && self.age_public_key_path().exists()
+            && self.sign_public_key_path().exists()
     }
 
     /// List all trusted identities (by filename stem).
@@ -92,7 +131,10 @@ impl KeyStore {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("pub") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    identities.push(stem.to_string());
+                    // Skip entries with invalid identity names (e.g. path traversal)
+                    if validate_identity_name(stem).is_ok() {
+                        identities.push(stem.to_string());
+                    }
                 }
             }
         }
@@ -101,12 +143,27 @@ impl KeyStore {
     }
 
     /// Write a file with restrictive permissions (0600) for private keys.
+    /// On Unix, the file is created with 0600 mode atomically to avoid a
+    /// window where the file is world-readable.
     pub fn write_private(&self, path: &Path, content: &str) -> Result<()> {
-        std::fs::write(path, content)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)?;
+            file.write_all(content.as_bytes())?;
+            // Ensure 0600 even if the file already existed with wrong permissions
+            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(path, content)?;
         }
         Ok(())
     }
