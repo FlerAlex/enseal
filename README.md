@@ -7,8 +7,6 @@
 
 > **Beta:** enseal is under active development. APIs and CLI flags may change between releases.
 
-For detailed documentation, visit [enseal.docsyard.com](https://enseal.docsyard.com).
-
 Secure, ephemeral secret sharing for developers.
 
 Stop pasting secrets into Slack. `enseal` makes the secure path faster than the insecure one — share `.env` files and secrets through encrypted, single-use channels with one command and zero setup.
