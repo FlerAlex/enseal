@@ -57,9 +57,45 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
 }
 
 async fn receive_wormhole(args: &ReceiveArgs, relay_url: Option<&str>) -> Result<Envelope> {
-    // Receive raw bytes once, then determine if it's identity or anonymous mode
-    // by trying to parse as SignedEnvelope first.
-    let data = transfer::wormhole::receive_raw(&args.code, relay_url).await?;
+    // When a relay is configured, use the enseal relay transport instead of wormhole.
+    // The share command mirrors this: --relay in anonymous mode sends via enseal relay too.
+    if let Some(relay_url) = relay_url {
+        let data = transfer::relay::receive(relay_url, &args.code).await?;
+        // Try identity mode first (signed envelope), fall back to plain envelope
+        let store = keys::store::KeyStore::open()?;
+        if store.is_initialized() {
+            if let Ok(signed) = SignedEnvelope::from_bytes(&data) {
+                let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+                let sender_sign_pubkey = signed.sender_sign_pubkey.clone();
+                let trusted_sender = keys::find_trusted_sender(&store, &signed);
+                let inner_bytes = signed.open(&own_identity, trusted_sender.as_ref())?;
+                let envelope = Envelope::from_bytes(&inner_bytes)?;
+                envelope.check_age(300)?;
+                if !args.quiet {
+                    if let Some(ref trusted) = trusted_sender {
+                        display::info("From:", &trusted.identity);
+                    } else {
+                        display::warning(&format!(
+                            "received from unknown sender (signing key: {}...)",
+                            &sender_sign_pubkey[..20.min(sender_sign_pubkey.len())]
+                        ));
+                    }
+                    display::ok("signature verified");
+                }
+                return Ok(envelope);
+            }
+        }
+        // Anonymous relay payload
+        if !args.quiet {
+            display::warning("received unsigned (anonymous) payload -- sender identity not verified");
+        }
+        let envelope = Envelope::from_bytes(&data)?;
+        envelope.check_age(300)?;
+        return Ok(envelope);
+    }
+
+    // No relay: use magic-wormhole
+    let data = transfer::wormhole::receive_raw(&args.code, None).await?;
 
     let store = keys::store::KeyStore::open()?;
 

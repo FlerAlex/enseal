@@ -204,19 +204,31 @@ async fn send_anonymous_mode(
     relay_url: Option<&str>,
     words: u16,
 ) -> Result<()> {
-    let (code, mailbox) = transfer::wormhole::create_mailbox(relay_url, words.into()).await?;
-
-    if !args.quiet {
-        display::info("Share code:", &code);
-        display::info("Expires:", "on first receive (server-dependent TTL)");
+    if let Some(relay_url) = relay_url {
+        // Relay mode: use enseal relay transport with a generated channel code
+        let code = transfer::relay::generate_code();
+        let wire_bytes = envelope.to_bytes()?;
+        transfer::relay::send(&wire_bytes, relay_url, &code).await?;
+        if !args.quiet {
+            display::info("Share code:", &code);
+            display::info("Expires:", "on first receive");
+            display::ok("sent");
+        } else {
+            println!("{}", code);
+        }
     } else {
-        println!("{}", code);
-    }
-
-    transfer::wormhole::send(envelope, mailbox).await?;
-
-    if !args.quiet {
-        display::ok("sent");
+        // Default: use magic-wormhole
+        let (code, mailbox) = transfer::wormhole::create_mailbox(None, words.into()).await?;
+        if !args.quiet {
+            display::info("Share code:", &code);
+            display::info("Expires:", "on first receive (server-dependent TTL)");
+        } else {
+            println!("{}", code);
+        }
+        transfer::wormhole::send(envelope, mailbox).await?;
+        if !args.quiet {
+            display::ok("sent");
+        }
     }
     Ok(())
 }

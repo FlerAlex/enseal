@@ -123,9 +123,43 @@ async fn receive_envelope(args: &InjectArgs, relay_url: Option<&str>) -> Result<
             display::ok("signature verified, file decrypted");
         }
         Ok(envelope)
+    } else if let Some(relay_url) = relay_url {
+        // Relay mode: use enseal relay transport
+        let data = transfer::relay::receive(relay_url, code).await?;
+        let store = keys::store::KeyStore::open()?;
+        if store.is_initialized() {
+            if let Ok(signed) = SignedEnvelope::from_bytes(&data) {
+                let own_identity = keys::identity::EnsealIdentity::load(&store)?;
+                let sender_pubkey = signed.sender_sign_pubkey.clone();
+                let trusted_sender = keys::find_trusted_sender(&store, &signed);
+                let inner_bytes = signed.open(&own_identity, trusted_sender.as_ref())?;
+                let envelope = Envelope::from_bytes(&inner_bytes)?;
+                envelope.check_age(300)?;
+                if !args.quiet {
+                    if let Some(ref trusted) = trusted_sender {
+                        display::info("From:", &trusted.identity);
+                    } else {
+                        display::warning(&format!(
+                            "received from unknown sender (signing key: {}...)",
+                            &sender_pubkey[..20.min(sender_pubkey.len())]
+                        ));
+                    }
+                    display::ok("signature verified");
+                }
+                return Ok(envelope);
+            }
+        }
+        if !args.quiet {
+            display::warning(
+                "received unsigned (anonymous) payload -- sender identity not verified",
+            );
+        }
+        let envelope = Envelope::from_bytes(&data)?;
+        envelope.check_age(300)?;
+        Ok(envelope)
     } else {
-        // Receive raw bytes once, then determine mode by trying to parse
-        let data = transfer::wormhole::receive_raw(code, relay_url).await?;
+        // Wormhole mode
+        let data = transfer::wormhole::receive_raw(code, None).await?;
         let store = keys::store::KeyStore::open()?;
 
         // Try identity mode: parse as SignedEnvelope

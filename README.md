@@ -118,8 +118,15 @@ Secrets exist only in the child process's memory. When it exits, they're gone.
 **Anonymous mode** (default) — wormhole-based, zero setup. A human-readable code is all you need. SPAKE2 mutual authentication prevents MITM attacks.
 
 ```bash
-enseal share .env                         # generates code
+enseal share .env                         # generates wormhole code
 enseal receive 7-guitarist-revenge        # uses code
+```
+
+With `--relay`, anonymous mode bypasses wormhole and uses the enseal relay transport instead. Both sides must use the same relay:
+
+```bash
+enseal share .env --relay ws://relay.internal:4443   # generates channel code
+enseal receive 3421-amber-frost --relay ws://relay.internal:4443
 ```
 
 **Identity mode** — public-key encryption for known teammates. Encrypt to a name.
@@ -380,21 +387,31 @@ enseal serve --port 4443
 
 # Check relay health
 curl http://localhost:4443/health
-
-# Clients point to your relay
-enseal share .env --relay wss://relay.internal:4443
-# or set it globally
-export ENSEAL_RELAY=wss://relay.internal:4443
 ```
 
-With identity mode and a self-hosted relay, sharing is fully codeless:
+`enseal serve` speaks plain WebSocket (`ws://`). For TLS, put a reverse proxy (Caddy, nginx) in front and connect with `wss://`.
+
+With `--relay` set, all modes route through your relay:
+
+```bash
+# Anonymous mode — generates enseal channel code instead of wormhole code
+enseal share .env --relay ws://relay.internal:4443
+# info:  Share code: 3421-amber-frost
+enseal receive 3421-amber-frost --relay ws://relay.internal:4443
+
+# Or set globally
+export ENSEAL_RELAY=ws://relay.internal:4443
+enseal share .env
+```
+
+Identity mode with a self-hosted relay is fully codeless:
 
 ```bash
 # receiver listens on the relay
-enseal inject --listen --relay wss://relay.internal:4443 -- npm start
+enseal inject --listen --relay ws://relay.internal:4443 -- npm start
 
 # sender pushes directly — no code generated
-enseal share .env --to alex --relay wss://relay.internal:4443
+enseal share .env --to alex --relay ws://relay.internal:4443
 ok: pushed to alex
 ```
 
@@ -436,15 +453,25 @@ enseal diff .env.development .env.production
 
 ## How It Works
 
-### Anonymous Mode (Wormhole)
+### Anonymous Mode
+
+**Wormhole (default, no `--relay`):**
 
 1. Sender encrypts the payload with `age`
-2. A SPAKE2 key exchange establishes a shared secret via the relay
+2. A SPAKE2 key exchange establishes a shared secret via the public wormhole relay
 3. The encrypted payload transits through the relay
 4. Recipient decrypts with the negotiated key
 5. The channel is destroyed — single use, time-limited
 
 The relay never sees plaintext. The wormhole code provides mutual authentication.
+
+**Enseal relay (`--relay`):**
+
+1. Sender encrypts the payload with `age` and sends it to the enseal relay under a generated channel code
+2. Recipient connects to the same relay with the same code and receives the payload
+3. The channel is consumed on first receive
+
+There is no SPAKE2 in this mode — the channel code is the only credential.
 
 ### Identity Mode (Public Key)
 
@@ -487,7 +514,9 @@ Optional `.enseal.toml` in your project root:
 
 ```toml
 [defaults]
-relay = "wss://relay.enseal.dev"     # or your self-hosted relay
+relay = "wss://relay.enseal.dev"     # public relay (identity mode)
+# relay = "ws://relay.internal:4443" # self-hosted without TLS
+# relay = "wss://relay.internal:4443" # self-hosted with TLS reverse proxy
 
 [filter]
 exclude = ["^PUBLIC_", "^NEXT_PUBLIC_", "^REACT_APP_"]
@@ -529,13 +558,15 @@ ENCRYPTION
 --secret <value>         Inline secret (raw string or KEY=VALUE)
 --label <name>           Human label for raw/piped secrets
 --as <KEY>               Wrap raw input as KEY=<value>
---relay <url>            Use specific relay server (also: ENSEAL_RELAY)
+--relay <url>            Route through relay server. Anonymous mode: uses enseal relay transport
+                         (generates channel code, bypasses wormhole). Identity mode: push to
+                         recipient's channel. Also: ENSEAL_RELAY env var.
 --env <profile>          Environment profile (resolves to .env.<profile>)
 --exclude <pattern>      Regex to exclude vars
 --include <pattern>      Regex to include only matching vars
 --no-filter              Send raw file, skip .env parsing
 --no-interpolate         Don't resolve ${VAR} references before sending
---words <n>              Number of words in wormhole code (default: 2)
+--words <n>              Words in wormhole code (2-5, default: 2). Wormhole mode only (no --relay).
 --quiet / -q             Minimal output
 ```
 
@@ -622,7 +653,8 @@ enseal keys group delete <name>          Delete a group
 - **v0.4** — Schema validation, templates, interpolation, profiles *(done)*
 - **v0.5** — At-rest encryption (encrypt/decrypt) *(done)*
 - **v0.10** — Groups, Helm chart, docs *(done)*
-- **v0.11** — Security hardening, docs sync *(current)*
+- **v0.11** — Security hardening, docs sync *(done)*
+- **v0.12** — .enseal.toml wired up, private relay for anonymous mode *(current)*
 - **v1.0** — crates.io publish, shell completions, final polish
 
 ## License
