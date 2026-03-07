@@ -87,7 +87,9 @@ async fn receive_wormhole(args: &ReceiveArgs, relay_url: Option<&str>) -> Result
         }
         // Anonymous relay payload
         if !args.quiet {
-            display::warning("received unsigned (anonymous) payload -- sender identity not verified");
+            display::warning(
+                "received unsigned (anonymous) payload -- sender identity not verified",
+            );
         }
         let envelope = Envelope::from_bytes(&data)?;
         envelope.check_age(300)?;
