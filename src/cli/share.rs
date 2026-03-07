@@ -205,16 +205,18 @@ async fn send_anonymous_mode(
     words: u16,
 ) -> Result<()> {
     if let Some(relay_url) = relay_url {
-        // Relay mode: use enseal relay transport with a generated channel code
+        // Relay mode: print code first so receiver can connect while we wait
         let code = transfer::relay::generate_code();
-        let wire_bytes = envelope.to_bytes()?;
-        transfer::relay::send(&wire_bytes, relay_url, &code).await?;
         if !args.quiet {
             display::info("Share code:", &code);
             display::info("Expires:", "on first receive");
-            display::ok("sent");
         } else {
             println!("{}", code);
+        }
+        let wire_bytes = envelope.to_bytes()?;
+        transfer::relay::send(&wire_bytes, relay_url, &code).await?;
+        if !args.quiet {
+            display::ok("sent");
         }
     } else {
         // Default: use magic-wormhole
