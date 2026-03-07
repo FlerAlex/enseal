@@ -40,22 +40,26 @@ pub struct ReceiveArgs {
 }
 
 pub async fn run(args: ReceiveArgs) -> Result<()> {
+    // Load .enseal.toml from CWD (silently ignore if absent)
+    let manifest = crate::config::Manifest::load(None)?;
+    let effective_relay: Option<String> = args.relay.clone().or(manifest.defaults.relay.clone());
+
     // Detect mode: file drop (.env.age file) vs wormhole code
     let is_file = std::path::Path::new(&args.code).exists() && args.code.ends_with(".age");
 
     let envelope = if is_file {
         receive_filedrop(&args)?
     } else {
-        receive_wormhole(&args).await?
+        receive_wormhole(&args, effective_relay.as_deref()).await?
     };
 
     output_envelope(&args, &envelope)
 }
 
-async fn receive_wormhole(args: &ReceiveArgs) -> Result<Envelope> {
+async fn receive_wormhole(args: &ReceiveArgs, relay_url: Option<&str>) -> Result<Envelope> {
     // Receive raw bytes once, then determine if it's identity or anonymous mode
     // by trying to parse as SignedEnvelope first.
-    let data = transfer::wormhole::receive_raw(&args.code, args.relay.as_deref()).await?;
+    let data = transfer::wormhole::receive_raw(&args.code, relay_url).await?;
 
     let store = keys::store::KeyStore::open()?;
 

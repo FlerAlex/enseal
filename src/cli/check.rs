@@ -33,6 +33,14 @@ pub fn run(args: CheckArgs) -> Result<()> {
 
     let d = diff::diff(&example_file, &env_file);
 
+    // Schema validation (non-blocking) when .enseal.toml is present
+    if let Ok(Some(schema)) = env::schema::load_schema(None) {
+        let errors = env::schema::validate(&env_file, &schema);
+        for err in &errors {
+            display::warning(&format!("{}", err));
+        }
+    }
+
     if d.only_left.is_empty() {
         display::ok(&format!(
             "all {} vars from {} present in {}",

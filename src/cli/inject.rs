@@ -5,8 +5,10 @@ use anyhow::{bail, Result};
 use clap::Args;
 
 use crate::cli::input::PayloadFormat;
+use crate::config::Manifest;
 use crate::crypto::envelope::Envelope;
 use crate::crypto::signing::SignedEnvelope;
+use crate::env;
 use crate::keys;
 use crate::transfer;
 use crate::ui::display;
@@ -51,14 +53,25 @@ pub async fn run(args: InjectArgs) -> Result<()> {
         bail!("--listen and a wormhole code are mutually exclusive");
     }
 
+    // Load .enseal.toml from CWD (silently ignore if absent)
+    let manifest = crate::config::Manifest::load(None)?;
+    let effective_relay: Option<String> = args.relay.clone().or(manifest.defaults.relay.clone());
+
     // 1. Receive the envelope
     let envelope = if args.listen {
-        listen_mode(&args).await?
+        listen_mode(&args, effective_relay.as_deref()).await?
     } else {
-        receive_envelope(&args).await?
+        receive_envelope(&args, effective_relay.as_deref()).await?
     };
 
-    // 2. Extract secrets as env vars
+    // 2. Schema validation warnings before injection (non-blocking)
+    if !args.quiet {
+        if let PayloadFormat::Env | PayloadFormat::Kv = envelope.format {
+            validate_against_schema(&envelope.payload, manifest);
+        }
+    }
+
+    // 3. Extract secrets as env vars
     let secrets = extract_secrets(&envelope)?;
 
     if !args.quiet {
@@ -70,7 +83,7 @@ pub async fn run(args: InjectArgs) -> Result<()> {
     run_child(&args.command, &secrets)
 }
 
-async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
+async fn receive_envelope(args: &InjectArgs, relay_url: Option<&str>) -> Result<Envelope> {
     let code = args
         .code
         .as_deref()
@@ -112,7 +125,7 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
         Ok(envelope)
     } else {
         // Receive raw bytes once, then determine mode by trying to parse
-        let data = transfer::wormhole::receive_raw(code, args.relay.as_deref()).await?;
+        let data = transfer::wormhole::receive_raw(code, relay_url).await?;
         let store = keys::store::KeyStore::open()?;
 
         // Try identity mode: parse as SignedEnvelope
@@ -153,11 +166,9 @@ async fn receive_envelope(args: &InjectArgs) -> Result<Envelope> {
     }
 }
 
-async fn listen_mode(args: &InjectArgs) -> Result<Envelope> {
-    let relay_url = args
-        .relay
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--listen requires --relay or ENSEAL_RELAY"))?;
+async fn listen_mode(args: &InjectArgs, relay_url: Option<&str>) -> Result<Envelope> {
+    let relay_url =
+        relay_url.ok_or_else(|| anyhow::anyhow!("--listen requires --relay or ENSEAL_RELAY"))?;
 
     let store = keys::store::KeyStore::open()?;
     let own_identity = keys::identity::EnsealIdentity::load(&store)?;
@@ -299,6 +310,33 @@ fn setup_signal_forwarding(child_pid: u32) {
             unsafe {
                 libc::kill(pid as libc::pid_t, sig);
             }
+        }
+    }
+}
+
+/// Run schema validation against a .env payload and emit warnings. Never blocks injection.
+fn validate_against_schema(payload: &str, manifest: Manifest) {
+    let schema = match env::schema::load_schema(None) {
+        Ok(Some(s)) => s,
+        _ => {
+            // Fall back to inline schema from manifest if present
+            match manifest.schema {
+                Some(s) => s,
+                None => return,
+            }
+        }
+    };
+
+    let env_file = match env::parser::parse(payload) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let errors = env::schema::validate(&env_file, &schema);
+    if !errors.is_empty() {
+        display::warning("payload has schema validation issues:");
+        for err in &errors {
+            display::warning(&format!("  {}", err));
         }
     }
 }

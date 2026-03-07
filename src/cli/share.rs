@@ -34,9 +34,9 @@ pub struct ShareArgs {
     #[arg(long)]
     pub output: Option<String>,
 
-    /// Number of words in wormhole code (2-5)
-    #[arg(long, default_value = "2", value_parser = clap::value_parser!(u16).range(2..=5))]
-    pub words: u16,
+    /// Number of words in wormhole code (2-5, default: 2)
+    #[arg(long, value_parser = clap::value_parser!(u16).range(2..=5))]
+    pub words: Option<u16>,
 
     /// Regex to exclude vars
     #[arg(long)]
@@ -83,6 +83,19 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         anyhow::bail!("--no-filter cannot be used with --include or --exclude");
     }
 
+    // Load .enseal.toml from CWD (silently ignore if absent)
+    let manifest = crate::config::Manifest::load(None)?;
+
+    // Resolve effective values: CLI flag takes precedence over manifest default
+    let effective_relay: Option<String> = args.relay.clone().or(manifest.defaults.relay.clone());
+    let words: u16 = args
+        .words
+        .unwrap_or_else(|| manifest.defaults.words.map(|w| w as u16).unwrap_or(2));
+    let effective_to: Option<String> = args
+        .to
+        .clone()
+        .or(manifest.identity.default_recipient.clone());
+
     // 1. Resolve file via profile if --env is set
     let file_arg = if let Some(ref profile) = args.env {
         let resolved = env::profile::resolve(profile, std::path::Path::new("."))?;
@@ -119,8 +132,14 @@ pub async fn run(args: ShareArgs) -> Result<()> {
             env::interpolation::interpolate(&env_file)?
         };
 
-        // Apply filters
-        let filtered = filter::filter(&env_file, args.include.as_deref(), args.exclude.as_deref())?;
+        // Merge manifest filter.exclude patterns with --exclude flag
+        let exclude_pattern =
+            build_exclude_pattern(args.exclude.as_deref(), &manifest.filter.exclude);
+        let filtered = filter::filter(
+            &env_file,
+            args.include.as_deref(),
+            exclude_pattern.as_deref(),
+        )?;
 
         if filtered.var_count() == 0 {
             anyhow::bail!("all variables were filtered out (check --include/--exclude patterns)");
@@ -131,10 +150,11 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         payload.content.clone()
     };
 
-    // 3. Create envelope
-    let envelope = Envelope::seal(&content, payload.format.clone(), payload.label.clone())?;
+    // 4. Create envelope and attach project name
+    let mut envelope = Envelope::seal(&content, payload.format.clone(), payload.label.clone())?;
+    envelope.metadata.project = manifest.project_name();
 
-    // 4. Display pre-send info
+    // 5. Display pre-send info
     if !args.quiet {
         if let Some(count) = envelope.metadata.var_count {
             display::info("Secrets:", &format!("{} variables", count));
@@ -142,19 +162,49 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         if let Some(ref label) = envelope.metadata.label {
             display::info("Label:", label);
         }
+        if let Some(ref project) = envelope.metadata.project {
+            display::info("Project:", project);
+        }
     }
 
-    // 5. Route based on mode: identity (--to) vs anonymous (wormhole)
-    if let Some(ref recipient_name) = args.to {
-        send_identity_mode(&args, &envelope, recipient_name).await
+    // 6. Route based on mode: identity (--to) vs anonymous (wormhole)
+    if let Some(ref recipient_name) = effective_to {
+        send_identity_mode(
+            &args,
+            &envelope,
+            recipient_name,
+            effective_relay.as_deref(),
+            words,
+        )
+        .await
     } else {
-        send_anonymous_mode(&args, &envelope).await
+        send_anonymous_mode(&args, &envelope, effective_relay.as_deref(), words).await
     }
 }
 
-async fn send_anonymous_mode(args: &ShareArgs, envelope: &Envelope) -> Result<()> {
-    let (code, mailbox) =
-        transfer::wormhole::create_mailbox(args.relay.as_deref(), args.words.into()).await?;
+/// Combine manifest exclude patterns and an optional CLI --exclude regex into one pattern.
+fn build_exclude_pattern(
+    cli_exclude: Option<&str>,
+    manifest_patterns: &[String],
+) -> Option<String> {
+    let mut patterns: Vec<&str> = manifest_patterns.iter().map(String::as_str).collect();
+    if let Some(p) = cli_exclude {
+        patterns.push(p);
+    }
+    if patterns.is_empty() {
+        None
+    } else {
+        Some(patterns.join("|"))
+    }
+}
+
+async fn send_anonymous_mode(
+    args: &ShareArgs,
+    envelope: &Envelope,
+    relay_url: Option<&str>,
+    words: u16,
+) -> Result<()> {
+    let (code, mailbox) = transfer::wormhole::create_mailbox(relay_url, words.into()).await?;
 
     if !args.quiet {
         display::info("Share code:", &code);
@@ -175,6 +225,8 @@ async fn send_identity_mode(
     args: &ShareArgs,
     envelope: &Envelope,
     recipient_name: &str,
+    relay_url: Option<&str>,
+    words: u16,
 ) -> Result<()> {
     // Resolve recipient (may be alias, group, or literal identity)
     let identities = keys::resolve_to_identities(recipient_name)?;
@@ -224,7 +276,7 @@ async fn send_identity_mode(
                 dest.display()
             ));
         }
-    } else if let Some(ref relay_url) = args.relay {
+    } else if let Some(relay_url) = relay_url {
         // Enseal relay push mode — no code needed
         let inner_bytes = envelope.to_bytes()?;
         let signed = SignedEnvelope::seal(&inner_bytes, &age_recipients, &sender)?;
@@ -246,7 +298,7 @@ async fn send_identity_mode(
             &age_recipients,
             &sender,
             None,
-            args.words.into(),
+            words.into(),
         )
         .await?;
 
