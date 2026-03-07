@@ -14,7 +14,12 @@ const DEFAULT_RENDEZVOUS_URL: &str = "ws://relay.magic-wormhole.io:4000/v1";
 pub fn app_config(relay_url: Option<&str>) -> AppConfig<serde_json::Value> {
     let rendezvous_url: Cow<'static, str> = match relay_url {
         Some(url) => Cow::Owned(url.to_string()),
-        None => Cow::Borrowed(DEFAULT_RENDEZVOUS_URL),
+        None => {
+            crate::ui::display::warning(
+                "using public magic-wormhole relay; set --relay or ENSEAL_RELAY to use a private relay",
+            );
+            Cow::Borrowed(DEFAULT_RENDEZVOUS_URL)
+        }
     };
 
     AppConfig {

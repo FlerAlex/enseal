@@ -11,6 +11,16 @@ fn ws_config() -> tungstenite::protocol::WebSocketConfig {
     }
 }
 
+const PUBLIC_RELAY_HOST: &str = "relay.enseal.dev";
+
+fn warn_if_public_relay(url: &str) {
+    if url.contains(PUBLIC_RELAY_HOST) {
+        crate::ui::display::warning(
+            "using public enseal relay (relay.enseal.dev); set --relay or ENSEAL_RELAY to use a private relay",
+        );
+    }
+}
+
 /// Maximum payload size accepted from relay (16 MiB).
 /// Protects against a malicious relay or sender exhausting memory.
 const MAX_RELAY_PAYLOAD: usize = 16 * 1024 * 1024;
@@ -124,12 +134,14 @@ async fn receive_inner(relay_url: &str, code: &str) -> Result<Vec<u8>> {
 /// Push data to a relay channel (identity mode sender).
 /// The channel_id is derived from the recipient's identity.
 pub async fn push(data: &[u8], relay_url: &str, channel_id: &str) -> Result<()> {
+    warn_if_public_relay(relay_url);
     send(data, relay_url, channel_id).await
 }
 
 /// Listen on a relay channel for incoming data (identity mode receiver).
 /// The channel_id is derived from own identity.
 pub async fn listen(relay_url: &str, channel_id: &str) -> Result<Vec<u8>> {
+    warn_if_public_relay(relay_url);
     receive(relay_url, channel_id).await
 }
 
