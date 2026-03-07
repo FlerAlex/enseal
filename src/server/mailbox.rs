@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::body::Bytes;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, State, WebSocketUpgrade};
@@ -21,11 +22,13 @@ pub struct RelayState {
 }
 
 struct Channel {
-    /// Sender to the first client waiting in this channel.
-    tx: mpsc::Sender<Message>,
-    /// Receiver that the first client reads from (gets paired client's messages).
-    rx: Option<mpsc::Receiver<Message>>,
+    /// Sender used to deliver messages TO the first client (live relay mode).
+    to_first: mpsc::Sender<Message>,
+    /// Receiver for messages FROM the first client (live relay mode).
+    from_first: Option<mpsc::Receiver<Message>>,
     created_at: Instant,
+    /// Stored payload for store-and-forward (sender pushed and disconnected).
+    stored: Option<Bytes>,
 }
 
 impl RelayState {
@@ -113,20 +116,34 @@ async fn handle_socket(
         });
     }
 
-    // Try to join an existing channel or create a new one
     let mut channels = state.channels.lock().await;
 
     if let Some(channel) = channels.remove(&code) {
-        // Second client: pair with the waiting client
-        let first_client_tx = channel.tx;
-        let first_client_rx = channel.rx.expect("channel should have rx");
-        drop(channels); // Release the lock
+        // === SECOND CLIENT (receiver) ===
+        drop(channels);
 
-        tracing::debug!(code = %code, "second client connected, starting relay");
+        if let Some(stored) = channel.stored {
+            // Store-and-forward: deliver pre-stored payload immediately
+            tracing::debug!(code = %code, "delivering stored payload to receiver");
+            let _ = ws_tx.send(Message::Binary(stored.to_vec())).await;
+            // Wait for ack or close from receiver before closing our side
+            while let Some(msg) = ws_rx.next().await {
+                match msg {
+                    Ok(Message::Binary(_)) | Ok(Message::Close(_)) => break,
+                    Err(_) => break,
+                    _ => continue,
+                }
+            }
+            let _ = ws_tx.send(Message::Close(None)).await;
+            tracing::debug!(code = %code, "store-and-forward delivery complete");
+            return;
+        }
 
-        // Relay:
-        // ws_rx (second client sends) -> first_client_tx (to first client)
-        // first_client_rx (first client sends) -> ws_tx (to second client)
+        // Live relay: pair with the waiting first client
+        let first_client_tx = channel.to_first;
+        let first_client_rx = channel.from_first.expect("channel should have from_first");
+
+        tracing::debug!(code = %code, "second client connected, starting live relay");
 
         let mut first_client_rx = first_client_rx;
 
@@ -163,11 +180,9 @@ async fn handle_socket(
                     break;
                 }
             }
-            // Signal close
             let _ = first_client_tx.send(Message::Close(None)).await;
         });
 
-        // Wait for either to finish, then abort the other
         tokio::select! {
             _ = &mut forward_first => {
                 forward_second.abort();
@@ -177,9 +192,9 @@ async fn handle_socket(
             }
         }
 
-        tracing::debug!(code = %code, "relay session ended");
+        tracing::debug!(code = %code, "live relay session ended");
     } else {
-        // First client: create a channel and wait
+        // === FIRST CLIENT (sender) ===
         if channels.len() >= state.max_channels {
             drop(channels);
             tracing::warn!("max channels reached, rejecting connection");
@@ -187,26 +202,92 @@ async fn handle_socket(
             return;
         }
 
-        // Create two channel pairs for bidirectional relay:
-        // to_first_tx/to_first_rx: messages TO the first client
-        // from_first_tx/from_first_rx: messages FROM the first client
         let (to_first_tx, mut to_first_rx) = mpsc::channel::<Message>(32);
         let (from_first_tx, from_first_rx) = mpsc::channel::<Message>(32);
 
         channels.insert(
             code.clone(),
             Channel {
-                tx: to_first_tx,
-                rx: Some(from_first_rx),
+                to_first: to_first_tx,
+                from_first: Some(from_first_rx),
                 created_at: Instant::now(),
+                stored: None,
             },
         );
-        drop(channels); // Release the lock
+        drop(channels);
 
-        tracing::debug!(code = %code, "first client connected, waiting for pair");
+        tracing::debug!(code = %code, "first client connected, waiting for action");
 
-        // Forward: first client sends -> from_first_tx (stored for second client)
-        let code_clone = code.clone();
+        // Detect mode:
+        //   - First client sends binary → store-and-forward (sender exits, channel kept)
+        //   - to_first_rx fires first → second client connected first (live relay)
+        //   - First client closes without sending → clean up
+        // Detect mode:
+        //   - First client sends binary → store-and-forward (return early, channel stays)
+        //   - to_first_rx fires first → second client connected first (break to live relay)
+        //   - First client closes without sending → clean up and return
+        'detect: loop {
+            tokio::select! {
+                msg = ws_rx.next() => {
+                    match msg {
+                        Some(Ok(Message::Binary(data))) => {
+                            let len = data.len();
+                            if len > max_payload_bytes {
+                                tracing::warn!(
+                                    "payload size {} exceeds limit {}",
+                                    len,
+                                    max_payload_bytes
+                                );
+                                let _ = ws_tx.send(Message::Close(None)).await;
+                                let mut ch = state.channels.lock().await;
+                                ch.remove(&code);
+                                return;
+                            }
+                            // Store payload in channel for receiver to pick up later
+                            {
+                                let mut ch = state.channels.lock().await;
+                                if let Some(channel) = ch.get_mut(&code) {
+                                    channel.stored = Some(Bytes::from(data));
+                                }
+                            }
+                            // Acknowledge sender so they can disconnect
+                            let _ = ws_tx.send(Message::Binary(b"ack".to_vec())).await;
+                            let _ = ws_tx.send(Message::Close(None)).await;
+                            tracing::debug!(code = %code, "payload stored, sender disconnecting");
+                            // Channel stays in map with stored data for receiver
+                            return;
+                        }
+                        Some(Ok(Message::Close(_))) | None => {
+                            let mut ch = state.channels.lock().await;
+                            ch.remove(&code);
+                            tracing::debug!(code = %code, "first client disconnected before sending");
+                            return;
+                        }
+                        Some(Err(_)) => {
+                            let mut ch = state.channels.lock().await;
+                            ch.remove(&code);
+                            return;
+                        }
+                        _ => continue 'detect, // ignore pings, text frames, etc.
+                    }
+                }
+                msg = to_first_rx.recv() => {
+                    // Second client connected and relayed a message to first client.
+                    // Forward that first message now, then fall through to live relay.
+                    if let Some(relay_msg) = msg {
+                        if ws_tx.send(relay_msg).await.is_err() {
+                            let mut ch = state.channels.lock().await;
+                            ch.remove(&code);
+                            return;
+                        }
+                    }
+                    break 'detect;
+                }
+            }
+        }
+
+        // Live relay mode: second client connected before first client pushed data.
+        // All other paths above have returned already.
         let max_payload_first = max_payload_bytes;
         let mut forward_outgoing = tokio::spawn(async move {
             while let Some(Ok(msg)) = ws_rx.next().await {
@@ -232,7 +313,6 @@ async fn handle_socket(
             }
         });
 
-        // Forward: to_first_rx (from second client) -> first client ws
         let mut forward_incoming = tokio::spawn(async move {
             while let Some(msg) = to_first_rx.recv().await {
                 if ws_tx.send(msg).await.is_err() {
@@ -250,10 +330,8 @@ async fn handle_socket(
             }
         }
 
-        // Clean up channel if still waiting (second client never connected)
-        let mut channels = state.channels.lock().await;
-        channels.remove(&code_clone);
-
-        tracing::debug!(code = %code_clone, "first client disconnected");
+        let mut ch = state.channels.lock().await;
+        ch.remove(&code);
+        tracing::debug!(code = %code, "first client live relay ended");
     }
 }
