@@ -1,3 +1,4 @@
+pub mod burnurl;
 pub mod filedrop;
 pub mod identity;
 pub mod relay;

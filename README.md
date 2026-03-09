@@ -113,7 +113,7 @@ Secrets exist only in the child process's memory. When it exits, they're gone.
 
 ## Features
 
-### Two Sharing Modes
+### Three Sharing Modes
 
 **Anonymous mode** (default) — wormhole-based, zero setup. A human-readable code is all you need. SPAKE2 mutual authentication prevents MITM attacks.
 
@@ -128,6 +128,24 @@ With `--relay`, anonymous mode bypasses wormhole and uses the enseal relay trans
 enseal share .env --relay ws://relay.internal:4443   # generates channel code
 enseal receive 3421-amber-frost --relay ws://relay.internal:4443
 ```
+
+**Async upload (`--upload`)** — sender-only. Encrypts locally and posts to [burnurl.dev](https://burnurl.dev), returning a self-destructing URL the recipient opens in a browser. No CLI required on the recipient side.
+
+```bash
+enseal share .env --upload
+#   Secret URL:  https://burnurl.dev/s/a3f9c2e1...
+#   Expires:     2026-03-08 19:42:00 UTC (24h)
+#   Reads:       1 (self-destructs on first open)
+```
+
+Recipient opens the URL in any browser — no enseal install needed. Add `--passphrase` to encrypt client-side before upload (server sees only ciphertext):
+
+```bash
+enseal share .env --upload --passphrase   # prompts for passphrase
+enseal share .env --upload --ttl 4        # 4-hour TTL (max 24)
+```
+
+Free tier is unauthenticated (20 uploads per 15 minutes per IP, 10 KB max). API key auth (`BURNURL_API_KEY`) requires a Pro or Team plan on burnurl.dev. Override the base URL for self-hosted instances: `BURNURL_URL=https://burnurl.internal`.
 
 **Identity mode** — public-key encryption for known teammates. Encrypt to a name.
 
@@ -473,6 +491,20 @@ The relay never sees plaintext. The wormhole code provides mutual authentication
 
 There is no SPAKE2 in this mode — the channel code is the only credential.
 
+### Async Upload (`--upload`)
+
+1. The sender serializes the payload to an `Envelope` (JSON, SHA-256 integrity check)
+2. Optionally encrypts it client-side with an age scrypt passphrase (`--passphrase`)
+3. POSTs the payload to `burnurl.dev/api/secret` over HTTPS
+4. burnurl.dev stores it with server-side AES-256-GCM at rest and returns a self-destruct URL
+5. The URL is valid for the configured TTL (up to 24h on the free tier), single read only
+
+The sender shares the URL. The recipient opens it in any browser — no enseal needed. With `--passphrase`, the passphrase must be shared separately; the server never sees plaintext.
+
+**Tiers:** The free tier works unauthenticated (rate-limited to 20 uploads per 15 minutes per IP, 10 KB payload max). API key auth via `BURNURL_API_KEY` requires a Pro or Team plan on burnurl.dev.
+
+Override `BURNURL_URL` to point at a self-hosted burnurl instance.
+
 ### Identity Mode (Public Key)
 
 1. Sender encrypts with the recipient's `age` public key
@@ -555,6 +587,9 @@ ENCRYPTION
 ```
 --to <name>              Identity mode: encrypt to recipient (alias, group, or identity)
 --output <dir>           File drop: write encrypted file (identity mode, no network)
+--upload                 Post to burnurl.dev (async, browser-readable, no CLI on recipient side)
+--ttl <hours>            Secret TTL for --upload (1-24, default: 24)
+--passphrase             Encrypt client-side before --upload (prompts; server never sees plaintext)
 --secret <value>         Inline secret (raw string or KEY=VALUE)
 --label <name>           Human label for raw/piped secrets
 --as <KEY>               Wrap raw input as KEY=<value>
@@ -654,8 +689,9 @@ enseal keys group delete <name>          Delete a group
 - **v0.5** — At-rest encryption (encrypt/decrypt) *(done)*
 - **v0.10** — Groups, Helm chart, docs *(done)*
 - **v0.11** — Security hardening, docs sync *(done)*
-- **v0.12** — .enseal.toml wired up, private relay for anonymous mode *(current)*
-- **v1.0** — crates.io publish, shell completions, final polish
+- **v0.12** — .enseal.toml wired up, private relay for anonymous mode *(done)*
+- **v0.16** — Async upload via burnurl.dev (`--upload`) *(current)*
+- **v1.0** — crates.io publish, final polish
 
 ## License
 

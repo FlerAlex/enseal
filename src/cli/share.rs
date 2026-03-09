@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::input;
@@ -7,6 +7,7 @@ use crate::crypto::signing::SignedEnvelope;
 use crate::env::{self, filter};
 use crate::keys;
 use crate::transfer;
+use crate::transfer::burnurl::UploadConfig;
 use crate::ui::display;
 
 #[derive(Args)]
@@ -62,6 +63,18 @@ pub struct ShareArgs {
     #[arg(long, env = "ENSEAL_RELAY")]
     pub relay: Option<String>,
 
+    /// Upload to burnurl.dev instead of relay (async, browser-readable, no CLI required for recipient)
+    #[arg(long)]
+    pub upload: bool,
+
+    /// Secret TTL in hours for --upload (default: 24, free tier max: 24)
+    #[arg(long, default_value = "24", value_parser = clap::value_parser!(u32).range(1..=24))]
+    pub ttl: u32,
+
+    /// Encrypt payload client-side before upload (prompts for passphrase; server never sees it)
+    #[arg(long)]
+    pub passphrase: bool,
+
     /// Minimal output
     #[arg(long, short)]
     pub quiet: bool,
@@ -76,6 +89,21 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     // --output requires --to (file drop is identity mode only)
     if args.output.is_some() && args.to.is_none() {
         anyhow::bail!("--output requires --to (file drop is only available in identity mode)");
+    }
+
+    // --upload is incompatible with identity mode and file drop
+    if args.upload && args.to.is_some() {
+        anyhow::bail!(
+            "--upload cannot be used with --to (identity mode is not supported for upload)"
+        );
+    }
+    if args.upload && args.output.is_some() {
+        anyhow::bail!("--upload cannot be used with --output");
+    }
+
+    // --passphrase only makes sense with --upload
+    if args.passphrase && !args.upload {
+        anyhow::bail!("--passphrase requires --upload");
     }
 
     // --no-filter skips all processing; reject contradictory filter flags
@@ -167,8 +195,10 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         }
     }
 
-    // 6. Route based on mode: identity (--to) vs anonymous (wormhole)
-    if let Some(ref recipient_name) = effective_to {
+    // 6. Route based on mode: upload (--upload) > identity (--to) > anonymous (wormhole)
+    if args.upload {
+        send_upload_mode(&args, &envelope).await
+    } else if let Some(ref recipient_name) = effective_to {
         send_identity_mode(
             &args,
             &envelope,
@@ -180,6 +210,65 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     } else {
         send_anonymous_mode(&args, &envelope, effective_relay.as_deref(), words).await
     }
+}
+
+async fn send_upload_mode(args: &ShareArgs, envelope: &Envelope) -> Result<()> {
+    // Resolve optional passphrase (prompt if --passphrase was set)
+    let passphrase = if args.passphrase {
+        if !is_terminal::is_terminal(std::io::stdin()) {
+            anyhow::bail!(
+                "stdin is not a terminal; cannot prompt for passphrase (use --no-passphrase or pipe passphrase via stdin)"
+            );
+        }
+        let pw = dialoguer::Password::new()
+            .with_prompt("Passphrase")
+            .with_confirmation("Confirm passphrase", "Passphrases do not match")
+            .interact()
+            .context("failed to read passphrase")?;
+        if pw.is_empty() {
+            anyhow::bail!("passphrase cannot be empty");
+        }
+        Some(pw)
+    } else {
+        None
+    };
+
+    if !args.quiet {
+        if passphrase.is_some() {
+            display::info("Encrypting with passphrase (client-side)...", "");
+        }
+        display::info("Uploading to burnurl.dev...", "");
+    }
+
+    let wire_bytes = envelope.to_bytes()?;
+    let config = UploadConfig {
+        base_url: UploadConfig::default().base_url,
+        ttl_hours: args.ttl,
+        passphrase,
+        api_key: None,
+    };
+
+    let result = transfer::burnurl::upload_secret(&wire_bytes, &config)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    if !args.quiet {
+        display::info("Secret URL:", &result.url);
+        display::info(
+            "Expires:",
+            &format!("{} ({}h)", result.expires_at, args.ttl),
+        );
+        display::info("Reads:", "1 (self-destructs on first open)");
+        if args.passphrase {
+            display::info("Passphrase:", "share separately (server never sees it)");
+        }
+        eprintln!();
+        eprintln!("  Send this URL to your recipient. It cannot be read twice.");
+    } else {
+        println!("{}", result.url);
+    }
+
+    Ok(())
 }
 
 /// Combine manifest exclude patterns and an optional CLI --exclude regex into one pattern.
