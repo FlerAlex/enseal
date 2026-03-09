@@ -7,7 +7,7 @@ const BURNURL_DEFAULT_BASE: &str = "https://burnurl.dev";
 const BURNURL_ENV_VAR: &str = "BURNURL_URL";
 /// API key env var — requires Pro or Team plan on burnurl.dev; free tier is unauthenticated.
 const BURNURL_API_KEY_VAR: &str = "BURNURL_API_KEY";
-/// Free tier payload cap (10 KB).
+/// Standard plan payload cap (10 KB); Pro/Team plans allow up to 100 KB.
 const MAX_PAYLOAD_BYTES: usize = 10 * 1024;
 const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -40,7 +40,7 @@ pub struct UploadResult {
 pub enum UploadError {
     #[error("rate limited by burnurl.dev — try again in a few minutes")]
     RateLimited,
-    #[error("payload too large for free tier (10KB max)")]
+    #[error("payload too large (10KB max on standard plans)")]
     PayloadTooLarge,
     #[error("authentication failed — check BURNURL_API_KEY")]
     Unauthorized,

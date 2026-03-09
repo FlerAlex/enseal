@@ -145,7 +145,7 @@ enseal share .env --upload --passphrase   # prompts for passphrase
 enseal share .env --upload --ttl 4        # 4-hour TTL (max 24)
 ```
 
-Free tier is unauthenticated (20 uploads per 15 minutes per IP, 10 KB max). API key auth (`BURNURL_API_KEY`) requires a Pro or Team plan on burnurl.dev. Override the base URL for self-hosted instances: `BURNURL_URL=https://burnurl.internal`.
+API access requires a Pro or Team plan on burnurl.dev. Set `BURNURL_API_KEY` to your key. Override the base URL for self-hosted instances: `BURNURL_URL=https://burnurl.internal`.
 
 **Identity mode** — public-key encryption for known teammates. Encrypt to a name.
 
@@ -501,7 +501,7 @@ There is no SPAKE2 in this mode — the channel code is the only credential.
 
 The sender shares the URL. The recipient opens it in any browser — no enseal needed. With `--passphrase`, the passphrase must be shared separately; the server never sees plaintext.
 
-**Tiers:** The free tier works unauthenticated (rate-limited to 20 uploads per 15 minutes per IP, 10 KB payload max). API key auth via `BURNURL_API_KEY` requires a Pro or Team plan on burnurl.dev.
+**Tiers:** API access requires a Pro or Team plan on burnurl.dev. Set `BURNURL_API_KEY` to your key — the free tier has no API access.
 
 Override `BURNURL_URL` to point at a self-hosted burnurl instance.
 
